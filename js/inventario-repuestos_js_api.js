@@ -1,9 +1,34 @@
-const API_URL = (() => {
-  const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-  return isLocal ? 'http://localhost:3000/api' : `${window.location.origin}/api`;
+// Permite forzar el servidor desde `index.html` con `window.API_BASE = 'http://192.168.x.x:3000'`
+const API_BASE = window.API_BASE || (() => {
+  // Si se abrió el HTML desde file:// asumimos servidor en localhost:3000
+  if (window.location.protocol === 'file:') return 'http://localhost:3000';
+  // Si estamos en un servidor normal, usamos el origin (incluye protocolo + host + puerto si aplica)
+  return window.location.origin || 'http://localhost:3000';
 })();
 
+const API_URL = API_BASE.endsWith('/api') ? API_BASE : `${API_BASE}/api`;
+
+async function tryFetch(urls, options) {
+  let lastError = null;
+  for (const u of urls) {
+    try {
+      const res = await fetch(u, options);
+      if (res && res.ok) {
+        API.isOnline = true;
+        return res;
+      }
+      lastError = new Error(`El servidor respondió ${res.status} en ${u}`);
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  API.isOnline = false;
+  throw lastError || new Error('No se pudo conectar a ninguna URL');
+}
+
 const API = {
+  // Se actualiza en cada consulta; evita indicar conexión al usar solo caché local.
+  isOnline: false,
   // Datos demo por si la API aún no está conectada
   demoProducts: [
     { codigo: "FMPD00812", descripcion: "Pastilla de freno delantera", marca: "Frasle", stockTeorico: 15, ubicacion: "A-01-2" },
@@ -37,11 +62,10 @@ const API = {
     const cached = this.readLocal('db_products', null);
 
     try {
-      const response = await fetch(`${API_URL}/products`);
-      if (!response.ok) throw new Error('Respuesta no válida');
-
+      const urls = [`${API_URL}/products`, `http://localhost:3000/api/products`];
+      const response = await tryFetch(urls);
       const data = await response.json();
-      if (Array.isArray(data) && data.length > 0) {
+      if (Array.isArray(data)) {
         this.writeLocal('db_products', data);
         return data;
       }
@@ -59,9 +83,8 @@ const API = {
     const cached = this.readLocal('db_counts', []);
 
     try {
-      const response = await fetch(`${API_URL}/counts`);
-      if (!response.ok) throw new Error('Respuesta no válida');
-
+      const urls = [`${API_URL}/counts`, `http://localhost:3000/api/counts`];
+      const response = await tryFetch(urls);
       const data = await response.json();
       if (Array.isArray(data)) {
         this.writeLocal('db_counts', data);
@@ -77,23 +100,45 @@ const API = {
 
   async saveProduct(productData) {
     const products = this.readLocal('db_products', []);
-    const existingIndex = products.findIndex(item => item.codigo.toLowerCase() === productData.codigo.toLowerCase());
+    const normalizedCodigo = String(productData.codigo || '').trim().toLowerCase();
+
+    // assign a local id for tracking
+    const localId = `p_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    const localCopy = { ...productData, _localId: localId, _pending: true };
+
+    const existingIndex = products.findIndex(item => String(item.codigo || '').toLowerCase() === normalizedCodigo);
 
     if (existingIndex >= 0) {
-      products[existingIndex] = { ...products[existingIndex], ...productData };
+      products[existingIndex] = { ...products[existingIndex], ...localCopy };
     } else {
-      products.push(productData);
+      products.push(localCopy);
     }
 
     this.writeLocal('db_products', products);
 
     try {
-      const response = await fetch(`${API_URL}/products`, {
+      const urls = [`${API_URL}/products`];
+      const options = {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ payload: productData })
+      };
+      const res = await tryFetch(urls, options);
+      const body = await res.json();
+
+      // mark as synced locally
+      const updated = this.readLocal('db_products', []).map(item => {
+        if (item._localId === localId) {
+          const copy = { ...item };
+          delete copy._pending;
+          delete copy._localId;
+          return { ...copy };
+        }
+        return item;
       });
-      return await response.json();
+      this.writeLocal('db_products', updated);
+
+      return body;
     } catch (err) {
       console.error('Modo offline: Producto guardado localmente.', err);
       return { status: 'offline' };
@@ -107,15 +152,39 @@ const API = {
       products[index] = { ...products[index], ...productData };
       this.writeLocal('db_products', products);
     }
-
     try {
-      const response = await fetch(`${API_URL}/products/${encodeURIComponent(codigoOriginal)}`, {
+      const urls = [`${API_URL}/products/${encodeURIComponent(codigoOriginal)}`];
+      const options = {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ payload: productData })
+      };
+      const res = await tryFetch(urls, options);
+
+      // on success, clear any pending flag for this product
+      const productsList = this.readLocal('db_products', []).map(item => {
+        if (String(item.codigo || '').toLowerCase() === String(codigoOriginal).toLowerCase()) {
+          const copy = { ...item, ...productData };
+          delete copy._pending;
+          delete copy._localId;
+          return copy;
+        }
+        return item;
       });
-      return await response.json();
+      this.writeLocal('db_products', productsList);
+
+      return await res.json();
     } catch (err) {
+      // mark local product as pending
+      const productsList = this.readLocal('db_products', []);
+      const updated = productsList.map(item => {
+        if (String(item.codigo || '').toLowerCase() === String(codigoOriginal).toLowerCase()) {
+          return { ...item, ...productData, _pending: true, _localId: item._localId || `p_${Date.now()}_${Math.random().toString(36).slice(2)}` };
+        }
+        return item;
+      });
+      this.writeLocal('db_products', updated);
+
       console.error('Modo offline: Producto actualizado localmente.', err);
       return { status: 'offline' };
     }
@@ -125,13 +194,17 @@ const API = {
     const products = this.readLocal('db_products', []);
     const filtered = products.filter(item => item.codigo.toLowerCase() !== String(codigo).toLowerCase());
     this.writeLocal('db_products', filtered);
-
     try {
-      const response = await fetch(`${API_URL}/products/${encodeURIComponent(codigo)}`, {
-        method: 'DELETE'
-      });
-      return await response.json();
+      const urls = [`${API_URL}/products/${encodeURIComponent(codigo)}`];
+      const options = { method: 'DELETE' };
+      const res = await tryFetch(urls, options);
+      return await res.json();
     } catch (err) {
+      // store pending delete list
+      const pendingDeletes = this.readLocal('db_pending_deletes', []);
+      if (!pendingDeletes.includes(codigo)) pendingDeletes.push(codigo);
+      this.writeLocal('db_pending_deletes', pendingDeletes);
+
       console.error('Modo offline: Producto eliminado localmente.', err);
       return { status: 'offline' };
     }
@@ -139,19 +212,132 @@ const API = {
 
   async saveCount(countData) {
     let localCounts = this.readLocal('db_counts', []);
-    localCounts.push(countData);
+
+    const localId = `c_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    const localCopy = { ...countData, _localId: localId, _pending: true };
+    localCounts.push(localCopy);
     this.writeLocal('db_counts', localCounts);
 
     try {
-      const response = await fetch(`${API_URL}/counts`, {
+      const urls = [`${API_URL}/counts`];
+      const options = {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ payload: countData })
+      };
+      const res = await tryFetch(urls, options);
+
+      // mark as synced locally
+      const updated = this.readLocal('db_counts', []).map(item => {
+        if (item._localId === localId) {
+          const copy = { ...item };
+          delete copy._pending;
+          delete copy._localId;
+          return copy;
+        }
+        return item;
       });
-      return await response.json();
+      this.writeLocal('db_counts', updated);
+
+      return await res.json();
     } catch (err) {
       console.error('Modo offline: Guardado localmente, se sincronizará luego.', err);
       return { status: 'offline' };
     }
+  }
+};
+
+// --- Sincronización de pendientes ---
+API.syncPendingCounts = async function () {
+  const localCounts = this.readLocal('db_counts', []);
+  let changed = false;
+
+  for (const item of localCounts.slice()) {
+    if (!item || !item._pending) continue;
+    try {
+      const res = await tryFetch([`${API_URL}/counts`], {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ payload: { codigo: item.codigo, descripcion: item.descripcion, cantidad: item.cantidad, usuario: item.usuario, fecha: item.fecha, hora: item.hora } })
+      });
+      if (res && res.ok) {
+        // remove pending flags
+        const updated = this.readLocal('db_counts', []).map(i => {
+          if (i._localId === item._localId) {
+            const copy = { ...i };
+            delete copy._pending;
+            delete copy._localId;
+            return copy;
+          }
+          return i;
+        });
+        this.writeLocal('db_counts', updated);
+        changed = true;
+      }
+    } catch (err) {
+      // leave it pending
+    }
+  }
+
+  return changed;
+};
+
+API.syncPendingProducts = async function () {
+  let changed = false;
+  const products = this.readLocal('db_products', []);
+
+  for (const p of products.slice()) {
+    if (!p || !p._pending) continue;
+    try {
+      const payload = { codigo: p.codigo, descripcion: p.descripcion, marca: p.marca, ubicacion: p.ubicacion, stockTeorico: p.stockTeorico };
+      const res = await tryFetch([`${API_URL}/products`], {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ payload })
+      });
+      if (res && res.ok) {
+        const updated = this.readLocal('db_products', []).map(i => {
+          if (i._localId === p._localId) {
+            const copy = { ...i };
+            delete copy._pending;
+            delete copy._localId;
+            return copy;
+          }
+          return i;
+        });
+        this.writeLocal('db_products', updated);
+        changed = true;
+      }
+    } catch (err) {
+      // ignore
+    }
+  }
+
+  // process pending deletes
+  const pendingDeletes = this.readLocal('db_pending_deletes', []);
+  if (Array.isArray(pendingDeletes) && pendingDeletes.length) {
+    const remaining = [];
+    for (const codigo of pendingDeletes) {
+      try {
+        const res = await tryFetch([`${API_URL}/products/${encodeURIComponent(codigo)}`], { method: 'DELETE' });
+        if (res && res.ok) changed = true;
+        else remaining.push(codigo);
+      } catch (err) {
+        remaining.push(codigo);
+      }
+    }
+    this.writeLocal('db_pending_deletes', remaining);
+  }
+
+  return changed;
+};
+
+API.syncAll = async function () {
+  try {
+    const p1 = await this.syncPendingProducts();
+    const p2 = await this.syncPendingCounts();
+    return p1 || p2;
+  } catch (err) {
+    return false;
   }
 };

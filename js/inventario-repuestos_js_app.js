@@ -2,6 +2,7 @@ let productsDB = [];
 let currentProduct = null;
 let importedStockMap = {};
 let editingProductCode = null;
+let globalSearchQuery = '';
 
 document.addEventListener('DOMContentLoaded', async () => {
   const savedImport = JSON.parse(localStorage.getItem('db_imported_stock') || '{}');
@@ -11,16 +12,53 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupEvents();
   renderReportTable();
   renderHistoryTable();
+  attemptSync();
 });
+
+// Intento de sincronización: empuja pendientes y refresca vistas si hubo cambios
+async function attemptSync() {
+  const statusEl = document.getElementById('sync-status');
+  if (!statusEl) return;
+
+  if (!navigator.onLine) {
+    statusEl.textContent = 'Desconectado - trabajando offline';
+    statusEl.className = 'status-offline';
+    return;
+  }
+
+  try {
+    statusEl.textContent = 'Sincronizando...';
+    statusEl.className = 'status-syncing';
+    const changed = await API.syncAll();
+    if (changed) {
+      await loadDatabase();
+      renderReportTable();
+      renderHistoryTable();
+    }
+    if (API.isOnline) {
+      statusEl.textContent = `Base compartida lista (${productsDB.length} productos)`;
+      statusEl.className = 'status-online';
+    } else {
+      statusEl.textContent = 'Servidor no disponible - datos locales';
+      statusEl.className = 'status-offline';
+    }
+  } catch (err) {
+    statusEl.textContent = 'Error sincronizando';
+    statusEl.className = 'status-offline';
+  }
+}
 
 async function loadDatabase() {
   const statusEl = document.getElementById('sync-status');
   productsDB = await API.fetchProducts();
   await loadCounts();
   
-  if (productsDB.length > 0) {
-    statusEl.textContent = `Base lista (${productsDB.length} productos)`;
+  if (API.isOnline) {
+    statusEl.textContent = `Base compartida lista (${productsDB.length} productos)`;
     statusEl.className = 'status-online';
+  } else if (productsDB.length > 0) {
+    statusEl.textContent = 'Servidor no disponible - datos locales';
+    statusEl.className = 'status-offline';
   } else {
     statusEl.textContent = 'Modo sin datos';
     statusEl.className = 'status-offline';
@@ -153,6 +191,9 @@ function setupEvents() {
   const btnSaveNewProduct = document.getElementById('btn-save-new-product');
   const btnCancelNewProduct = document.getElementById('btn-cancel-new-product');
   const reportTable = document.getElementById('table-report');
+  const newProductCodigoInput = document.getElementById('new-product-codigo');
+  const globalSearchInput = document.getElementById('global-search');
+  const btnClearSearch = document.getElementById('btn-clear-search');
   
   reportTable.addEventListener('click', async (event) => {
     const actionButton = event.target.closest('[data-action]');
@@ -203,7 +244,60 @@ function setupEvents() {
 
   btnSaveNewProduct.addEventListener('click', submitNewProduct);
   btnCancelNewProduct.addEventListener('click', hideNewProductForm);
+
+  // Alerta en tiempo real si el código ingresado para nuevo producto ya existe
+  if (newProductCodigoInput) {
+    newProductCodigoInput.addEventListener('blur', () => {
+      const codigo = (newProductCodigoInput.value || '').trim();
+      if (!codigo) return;
+      const duplicate = productsDB.find(p => p.codigo.toLowerCase() === codigo.toLowerCase() && p.codigo.toLowerCase() !== (editingProductCode || '').toLowerCase());
+      if (duplicate) {
+        alert(`El código "${codigo}" ya existe para "${duplicate.descripcion}".`);
+        newProductCodigoInput.focus();
+      }
+    });
+  }
+
+  // Búsqueda global: filtra la tabla de reporte en tiempo real
+  if (globalSearchInput) {
+    globalSearchInput.addEventListener('input', () => {
+      globalSearchQuery = (globalSearchInput.value || '').trim().toLowerCase();
+      // Navegar a la pestaña reporte si hay texto y no está visible
+      if (globalSearchQuery && !document.getElementById('sec-reporte').classList.contains('active')) {
+        switchTab('reporte');
+      }
+      renderReportTable();
+    });
+
+    globalSearchInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        clearGlobalSearch();
+      }
+    });
+  }
+
+  if (btnClearSearch) {
+    btnClearSearch.addEventListener('click', clearGlobalSearch);
+  }
 }
+
+// Eventos de red y sincronización periódica
+window.addEventListener('online', () => {
+  attemptSync();
+});
+
+window.addEventListener('offline', () => {
+  const statusEl = document.getElementById('sync-status');
+  if (statusEl) {
+    statusEl.textContent = 'Desconectado - trabajando offline';
+    statusEl.className = 'status-offline';
+  }
+});
+
+// Intento periódico cada 30s
+setInterval(() => {
+  if (navigator.onLine) attemptSync();
+}, 30000);
 
 function manualSearchProduct() {
   const codigo = document.getElementById('input-codigo').value.trim();
@@ -471,6 +565,7 @@ function renderReportTable() {
   tbody.innerHTML = '';
 
   const physicalMap = getEffectivePhysicalMap();
+  const query = (document.getElementById('global-search')?.value || '').trim().toLowerCase();
 
   let kpiTotal = productsDB.length;
   let kpiFaltantes = 0;
@@ -478,6 +573,13 @@ function renderReportTable() {
   let kpiNoContados = 0;
 
   productsDB.forEach(prod => {
+    // Si hay query, filtramos por código, descripción o marca
+    if (query) {
+      const matches = (prod.codigo || '').toLowerCase().includes(query)
+        || (prod.descripcion || '').toLowerCase().includes(query)
+        || (prod.marca || '').toLowerCase().includes(query);
+      if (!matches) return;
+    }
     const productKey = normalizeCodigo(prod.codigo);
     const contado = Object.prototype.hasOwnProperty.call(physicalMap, productKey);
     const stockFisico = physicalMap[productKey] || 0;
@@ -555,6 +657,15 @@ function clearLocalHistory() {
   if (confirm("¿Estás seguro de reiniciar los conteos locales del navegador?")) {
     localStorage.removeItem('db_counts');
     renderHistoryTable();
+    renderReportTable();
+  }
+}
+
+function clearGlobalSearch() {
+  const input = document.getElementById('global-search');
+  if (input) {
+    input.value = '';
+    globalSearchQuery = '';
     renderReportTable();
   }
 }
