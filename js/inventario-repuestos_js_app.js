@@ -156,8 +156,10 @@ function buildProductsFromImport(rows) {
     const codigo = String(findImportValue(row, ['codigo', 'cod', 'codigo_repuesto', 'codigo_producto']) || '').trim();
     if (!codigo) return;
 
-    const stockTeoricoValue = findImportValue(row, ['stock_teorico', 'teorico', 'stock_inicial', 'stock', 'cantidad', 'total', 'qty']);
+    const stockTeoricoValue = findImportValue(row, ['stock_teorico', 'teorico', 'stock_inicial']);
+    const stockFisicoValue = findImportValue(row, ['stock_fisico', 'cantidad_fisica', 'fisico', 'cantidad', 'stock', 'total', 'qty']);
     const stockTeorico = parseImportedQuantity(stockTeoricoValue);
+    const stockFisico = parseImportedQuantity(stockFisicoValue);
     const key = normalizeCodigo(codigo);
 
     products.set(key, {
@@ -165,7 +167,12 @@ function buildProductsFromImport(rows) {
       descripcion: String(findImportValue(row, ['descripcion', 'descripcion_producto', 'producto', 'nombre', 'detalle', 'articulo']) || `Producto importado (${codigo})`).trim(),
       marca: String(findImportValue(row, ['marca', 'brand']) || 'Sin marca').trim(),
       ubicacion: String(findImportValue(row, ['ubicacion', 'ubicacion_producto', 'deposito', 'sector', 'pasillo']) || 'Sin ubicación').trim(),
-      stockTeorico: Number.isFinite(stockTeorico) ? stockTeorico : 0
+      // En archivos de conteo, StockTeorico suele venir en 0 y StockFisico
+      // representa el stock real de alta. Tomamos ese valor para no crear
+      // productos nuevos sin existencias.
+      stockTeorico: Number.isFinite(stockTeorico) && stockTeorico !== 0
+        ? stockTeorico
+        : (Number.isFinite(stockFisico) ? stockFisico : 0)
     });
   });
 
@@ -200,17 +207,22 @@ async function importStockFile() {
       const productCodes = new Set(productsDB.map((product) => normalizeCodigo(product.codigo)));
       const importedProducts = buildProductsFromImport(rows);
       const newProducts = importedProducts.filter((product) => !productCodes.has(normalizeCodigo(product.codigo)));
+      const productsWithStockToUpdate = importedProducts.filter((product) => {
+        const existing = productsDB.find((item) => normalizeCodigo(item.codigo) === normalizeCodigo(product.codigo));
+        return existing && Number(existing.stockTeorico || 0) === 0 && Number(product.stockTeorico || 0) > 0;
+      });
+      const productsToSave = [...newProducts, ...productsWithStockToUpdate];
 
-      for (const product of newProducts) {
+      for (const product of productsToSave) {
         await API.saveProduct(product);
       }
 
-      if (newProducts.length) {
+      if (productsToSave.length) {
         await loadDatabase();
       }
       renderReportTable();
 
-      alert(`Se importaron ${importedProducts.length} código(s). Se agregaron ${newProducts.length} producto(s) nuevo(s) al catálogo y ${importedProducts.length - newProducts.length} ya existían.`);
+      alert(`Se importaron ${importedProducts.length} código(s). Se agregaron ${newProducts.length} producto(s) nuevo(s) y se actualizaron ${productsWithStockToUpdate.length} producto(s) que tenían stock en cero.`);
     } catch (error) {
       console.error(error);
       alert('No se pudo leer el archivo. Asegurate de subir un CSV o Excel válido.');
