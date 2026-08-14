@@ -114,30 +114,29 @@ function parseImportedQuantity(value) {
   return Number(normalized);
 }
 
+function findImportValue(row, patterns) {
+  const entries = Object.entries(row || {});
+  for (const pattern of patterns) {
+    const normalizedPattern = normalizeColumnName(pattern);
+    const entry = entries.find(([key]) => {
+      const normalizedKey = normalizeColumnName(key);
+      return normalizedKey === normalizedPattern || normalizedKey.includes(normalizedPattern);
+    });
+    if (entry && entry[1] !== undefined && entry[1] !== null && entry[1] !== '') {
+      return entry[1];
+    }
+  }
+  return null;
+}
+
 function buildImportedStockFromFile(rows) {
   const normalized = {};
 
   rows.forEach((row) => {
     if (!row || typeof row !== 'object') return;
 
-    const entries = Object.entries(row);
-    const findValue = (patterns) => {
-      for (const pattern of patterns) {
-        const normalizedPattern = normalizeColumnName(pattern);
-        const entry = entries.find(([key]) => {
-          const normalizedKey = normalizeColumnName(key);
-          return normalizedKey === normalizedPattern || normalizedKey.includes(normalizedPattern);
-        });
-        if (entry) {
-          const value = entry[1];
-          if (value !== undefined && value !== null && value !== '') return value;
-        }
-      }
-      return null;
-    };
-
-    const codigo = normalizeCodigo(findValue(['codigo', 'cod', 'codigo_repuesto', 'codigo_producto']));
-    const cantidad = findValue(['cantidad', 'stock', 'stock_fisico', 'total', 'qty', 'cantidad_fisica', 'fisico', 'actual']);
+    const codigo = normalizeCodigo(findImportValue(row, ['codigo', 'cod', 'codigo_repuesto', 'codigo_producto']));
+    const cantidad = findImportValue(row, ['cantidad', 'stock', 'stock_fisico', 'total', 'qty', 'cantidad_fisica', 'fisico', 'actual']);
 
     if (!codigo) return;
 
@@ -150,7 +149,30 @@ function buildImportedStockFromFile(rows) {
   return normalized;
 }
 
-function importStockFile() {
+function buildProductsFromImport(rows) {
+  const products = new Map();
+
+  rows.forEach((row) => {
+    const codigo = String(findImportValue(row, ['codigo', 'cod', 'codigo_repuesto', 'codigo_producto']) || '').trim();
+    if (!codigo) return;
+
+    const stockTeoricoValue = findImportValue(row, ['stock_teorico', 'teorico', 'stock_inicial', 'stock', 'cantidad', 'total', 'qty']);
+    const stockTeorico = parseImportedQuantity(stockTeoricoValue);
+    const key = normalizeCodigo(codigo);
+
+    products.set(key, {
+      codigo,
+      descripcion: String(findImportValue(row, ['descripcion', 'descripcion_producto', 'producto', 'nombre', 'detalle', 'articulo']) || `Producto importado (${codigo})`).trim(),
+      marca: String(findImportValue(row, ['marca', 'brand']) || 'Sin marca').trim(),
+      ubicacion: String(findImportValue(row, ['ubicacion', 'ubicacion_producto', 'deposito', 'sector', 'pasillo']) || 'Sin ubicación').trim(),
+      stockTeorico: Number.isFinite(stockTeorico) ? stockTeorico : 0
+    });
+  });
+
+  return Array.from(products.values());
+}
+
+async function importStockFile() {
   const input = document.getElementById('import-stock-file');
   if (!input || !input.files || !input.files[0]) {
     alert('Seleccioná un archivo CSV o Excel antes de importar.');
@@ -160,7 +182,7 @@ function importStockFile() {
   const file = input.files[0];
   const reader = new FileReader();
 
-  reader.onload = function (event) {
+  reader.onload = async function (event) {
     try {
       const data = event.target.result;
       const workbook = XLSX.read(data, { type: 'array' });
@@ -174,17 +196,21 @@ function importStockFile() {
 
       importedStockMap = buildImportedStockFromFile(rows);
       localStorage.setItem('db_imported_stock', JSON.stringify(importedStockMap));
+
+      const productCodes = new Set(productsDB.map((product) => normalizeCodigo(product.codigo)));
+      const importedProducts = buildProductsFromImport(rows);
+      const newProducts = importedProducts.filter((product) => !productCodes.has(normalizeCodigo(product.codigo)));
+
+      for (const product of newProducts) {
+        await API.saveProduct(product);
+      }
+
+      if (newProducts.length) {
+        await loadDatabase();
+      }
       renderReportTable();
 
-      const importedCodes = Object.keys(importedStockMap);
-      const productCodes = new Set(productsDB.map((product) => normalizeCodigo(product.codigo)));
-      const unmatchedCodes = importedCodes.filter((codigo) => !productCodes.has(codigo));
-      const matchedCount = importedCodes.length - unmatchedCodes.length;
-      const unmatchedMessage = unmatchedCodes.length
-        ? `\n\n${unmatchedCodes.length} código(s) no aparecen en el reporte porque no existen en el catálogo de productos: ${unmatchedCodes.slice(0, 5).join(', ')}${unmatchedCodes.length > 5 ? '…' : ''}.`
-        : '';
-
-      alert(`Se importaron ${importedCodes.length} código(s). ${matchedCount} coinciden con productos del reporte.${unmatchedMessage}`);
+      alert(`Se importaron ${importedProducts.length} código(s). Se agregaron ${newProducts.length} producto(s) nuevo(s) al catálogo y ${importedProducts.length - newProducts.length} ya existían.`);
     } catch (error) {
       console.error(error);
       alert('No se pudo leer el archivo. Asegurate de subir un CSV o Excel válido.');

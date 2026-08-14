@@ -151,7 +151,7 @@
 
         <div class="import-panel">
           <div class="import-header">
-            <h3>Importar stock físico</h3>
+            <h3>Importar productos y stock</h3>
             <button type="button" class="btn-secondary" onclick="document.getElementById('import-stock-file').click()">📁 Seleccionar archivo</button>
           </div>
           <div class="import-actions">
@@ -159,7 +159,7 @@
             <button type="button" class="btn-import" onclick="importStockFile()">Importar CSV / Excel</button>
             <button type="button" class="btn-danger" onclick="clearImportedStock()">🗑️ Limpiar importación</button>
           </div>
-          <p class="import-help">Se aceptan archivos con columnas como: Código, Cantidad, Stock, Stock Físico o similares.</p>
+          <p class="import-help">Se crean los códigos nuevos. Columnas admitidas: Código, Descripción, Marca, Ubicación, Stock/Cantidad y Stock Físico.</p>
         </div>
 
         <div class="filter-group">
