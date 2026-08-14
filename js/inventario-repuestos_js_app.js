@@ -92,18 +92,44 @@ function normalizeCodigo(value) {
   return String(value || '').trim().toLowerCase();
 }
 
+function normalizeColumnName(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '');
+}
+
+function parseImportedQuantity(value) {
+  const raw = String(value ?? '').trim().replace(/\s/g, '');
+  if (!raw) return NaN;
+
+  // Acepta tanto 1.234,50 como 1,234.50 y 1234,50.
+  const lastComma = raw.lastIndexOf(',');
+  const lastDot = raw.lastIndexOf('.');
+  const normalized = lastComma > lastDot
+    ? raw.replace(/\./g, '').replace(',', '.')
+    : raw.replace(/,/g, '');
+
+  return Number(normalized);
+}
+
 function buildImportedStockFromFile(rows) {
   const normalized = {};
 
   rows.forEach((row) => {
     if (!row || typeof row !== 'object') return;
 
-    const keys = Object.keys(row).map((key) => String(key || '').trim().toLowerCase());
+    const entries = Object.entries(row);
     const findValue = (patterns) => {
       for (const pattern of patterns) {
-        const idx = keys.findIndex((key) => key === pattern || key.includes(pattern));
-        if (idx >= 0) {
-          const value = Object.values(row)[idx];
+        const normalizedPattern = normalizeColumnName(pattern);
+        const entry = entries.find(([key]) => {
+          const normalizedKey = normalizeColumnName(key);
+          return normalizedKey === normalizedPattern || normalizedKey.includes(normalizedPattern);
+        });
+        if (entry) {
+          const value = entry[1];
           if (value !== undefined && value !== null && value !== '') return value;
         }
       }
@@ -115,7 +141,7 @@ function buildImportedStockFromFile(rows) {
 
     if (!codigo) return;
 
-    const parsed = Number(String(cantidad ?? '').replace(',', '.'));
+    const parsed = parseImportedQuantity(cantidad);
     if (Number.isFinite(parsed)) {
       normalized[codigo] = parsed;
     }
@@ -149,7 +175,16 @@ function importStockFile() {
       importedStockMap = buildImportedStockFromFile(rows);
       localStorage.setItem('db_imported_stock', JSON.stringify(importedStockMap));
       renderReportTable();
-      alert(`Se importaron ${Object.keys(importedStockMap).length} códigos desde el archivo.`);
+
+      const importedCodes = Object.keys(importedStockMap);
+      const productCodes = new Set(productsDB.map((product) => normalizeCodigo(product.codigo)));
+      const unmatchedCodes = importedCodes.filter((codigo) => !productCodes.has(codigo));
+      const matchedCount = importedCodes.length - unmatchedCodes.length;
+      const unmatchedMessage = unmatchedCodes.length
+        ? `\n\n${unmatchedCodes.length} código(s) no aparecen en el reporte porque no existen en el catálogo de productos: ${unmatchedCodes.slice(0, 5).join(', ')}${unmatchedCodes.length > 5 ? '…' : ''}.`
+        : '';
+
+      alert(`Se importaron ${importedCodes.length} código(s). ${matchedCount} coinciden con productos del reporte.${unmatchedMessage}`);
     } catch (error) {
       console.error(error);
       alert('No se pudo leer el archivo. Asegurate de subir un CSV o Excel válido.');
