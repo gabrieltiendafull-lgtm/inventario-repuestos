@@ -1,7 +1,7 @@
 const express = require('express');
 const path = require('path');
 const cors = require('cors');
-const { initializeDb, all, get, run } = require('./db');
+const { initializeDb, all, get, run, storageType } = require('./db');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -32,7 +32,7 @@ function parseBody(req) {
 }
 
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', database: 'sqlite' });
+  res.json({ status: 'ok', database: storageType });
 });
 
 app.get('/api/products', async (req, res) => {

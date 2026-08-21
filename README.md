@@ -44,6 +44,34 @@ npm start
 ### Variables importantes
 
 - `PORT`: puerto HTTP del host
+- `SUPABASE_URL` y `SUPABASE_SECRET_KEY`: al definir ambas, la aplicación
+  guarda productos y conteos en Supabase en lugar del archivo SQLite temporal.
+
+## Datos persistentes con Supabase
+
+Render gratuito elimina los archivos locales cuando el servicio se detiene; por
+eso SQLite no es adecuado para guardar el inventario en producción. Para usar
+Supabase:
+
+1. Creá un proyecto en Supabase y esperá a que esté listo.
+2. En **SQL Editor**, ejecutá el archivo `supabase/schema.sql` de este repositorio.
+3. En **Project Settings > API**, copiá `Project URL` y una **llave secreta**
+   (no la publiques ni la agregues al repositorio).
+4. En Render, abrí tu servicio > **Environment** y agregá `SUPABASE_URL` y
+   `SUPABASE_SECRET_KEY`. Luego ejecutá **Manual Deploy > Deploy latest commit**.
+
+Al abrir `/api/health`, la respuesta debe indicar `"database":"supabase"`.
+
+Antes de agregar las variables a Render, podés copiar los datos actuales con:
+
+```powershell
+$env:SUPABASE_URL='https://<proyecto>.supabase.co'
+$env:SUPABASE_SECRET_KEY='<clave-secreta>'
+node scripts/import-render-data-to-supabase.js https://inventario-repuestos-q2m2.onrender.com
+```
+
+El script se ejecuta una sola vez y no debe repetirse, porque volvería a copiar
+los conteos.
 
 ### Nota importante
 
