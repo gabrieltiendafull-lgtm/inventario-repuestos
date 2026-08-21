@@ -4,6 +4,8 @@ create table if not exists public.productos (
   codigo text not null,
   descripcion text not null,
   marca text not null,
+  talle text,
+  color text,
   ubicacion text not null,
   stock_teorico numeric not null default 0,
   activo boolean not null default true,

@@ -289,7 +289,7 @@ API.syncPendingProducts = async function () {
   for (const p of products.slice()) {
     if (!p || !p._pending) continue;
     try {
-      const payload = { codigo: p.codigo, descripcion: p.descripcion, marca: p.marca, ubicacion: p.ubicacion, stockTeorico: p.stockTeorico };
+      const payload = { codigo: p.codigo, descripcion: p.descripcion, marca: p.marca, talle: p.talle, color: p.color, ubicacion: p.ubicacion, stockTeorico: p.stockTeorico };
       const res = await tryFetch([`${API_URL}/products`], {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

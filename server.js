@@ -43,6 +43,8 @@ app.get('/api/products', async (req, res) => {
       codigo: row.codigo,
       descripcion: row.descripcion,
       marca: row.marca,
+      talle: row.talle || '',
+      color: row.color || '',
       ubicacion: row.ubicacion,
       stockTeorico: Number(row.stock_teorico || 0)
     })));
@@ -59,6 +61,8 @@ app.post('/api/products', async (req, res) => {
     const codigo = String(payload.codigo || '').trim();
     const descripcion = String(payload.descripcion || '').trim();
     const marca = String(payload.marca || '').trim();
+    const talle = String(payload.talle || '').trim();
+    const color = String(payload.color || '').trim();
     const ubicacion = String(payload.ubicacion || '').trim();
     const stockTeorico = Number(payload.stockTeorico ?? payload.stock_teorico ?? 0);
 
@@ -70,8 +74,8 @@ app.post('/api/products', async (req, res) => {
 
     if (existing) {
       await run(
-        'UPDATE productos SET descripcion = ?, marca = ?, ubicacion = ?, stock_teorico = ? WHERE id = ?',
-        [descripcion, marca, ubicacion, stockTeorico, existing.id]
+        'UPDATE productos SET descripcion = ?, marca = ?, talle = ?, color = ?, ubicacion = ?, stock_teorico = ? WHERE id = ?',
+        [descripcion, marca, talle, color, ubicacion, stockTeorico, existing.id]
       );
 
       return res.json({
@@ -80,6 +84,8 @@ app.post('/api/products', async (req, res) => {
           codigo,
           descripcion,
           marca,
+          talle,
+          color,
           ubicacion,
           stockTeorico
         }
@@ -87,8 +93,8 @@ app.post('/api/products', async (req, res) => {
     }
 
     const result = await run(
-      'INSERT INTO productos (codigo, descripcion, marca, ubicacion, stock_teorico) VALUES (?, ?, ?, ?, ?)',
-      [codigo, descripcion, marca, ubicacion, stockTeorico]
+      'INSERT INTO productos (codigo, descripcion, marca, talle, color, ubicacion, stock_teorico) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [codigo, descripcion, marca, talle, color, ubicacion, stockTeorico]
     );
 
     res.json({
@@ -98,6 +104,8 @@ app.post('/api/products', async (req, res) => {
         codigo,
         descripcion,
         marca,
+        talle,
+        color,
         ubicacion,
         stockTeorico
       }
@@ -116,6 +124,8 @@ app.put('/api/products/:codigo', async (req, res) => {
     const codigo = String(payload.codigo || codigoOriginal).trim();
     const descripcion = String(payload.descripcion || '').trim();
     const marca = String(payload.marca || '').trim();
+    const talle = String(payload.talle || '').trim();
+    const color = String(payload.color || '').trim();
     const ubicacion = String(payload.ubicacion || '').trim();
     const stockTeorico = Number(payload.stockTeorico ?? payload.stock_teorico ?? 0);
 
@@ -134,8 +144,8 @@ app.put('/api/products/:codigo', async (req, res) => {
     }
 
     await run(
-      'UPDATE productos SET codigo = ?, descripcion = ?, marca = ?, ubicacion = ?, stock_teorico = ? WHERE id = ?',
-      [codigo, descripcion, marca, ubicacion, stockTeorico, existing.id]
+      'UPDATE productos SET codigo = ?, descripcion = ?, marca = ?, talle = ?, color = ?, ubicacion = ?, stock_teorico = ? WHERE id = ?',
+      [codigo, descripcion, marca, talle, color, ubicacion, stockTeorico, existing.id]
     );
 
     await run(
@@ -143,7 +153,7 @@ app.put('/api/products/:codigo', async (req, res) => {
       [codigo, descripcion, codigoOriginal]
     );
 
-    return res.json({ status: 'updated', codigo, descripcion, marca, ubicacion, stockTeorico });
+    return res.json({ status: 'updated', codigo, descripcion, marca, talle, color, ubicacion, stockTeorico });
   } catch (error) {
     console.error('Error al actualizar producto:', error);
     res.status(500).json({ error: 'No se pudo actualizar el producto' });

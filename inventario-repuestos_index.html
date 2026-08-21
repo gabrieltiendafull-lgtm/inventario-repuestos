@@ -58,6 +58,8 @@
             <div class="info-grid">
               <div><strong>Producto:</strong> <span id="info-desc">-</span></div>
               <div><strong>Marca:</strong> <span id="info-marca">-</span></div>
+              <div><strong>Talle:</strong> <span id="info-talle">-</span></div>
+              <div><strong>Color:</strong> <span id="info-color">-</span></div>
               <div><strong>Ubicación:</strong> <span id="info-ubicacion">-</span></div>
               <div><strong>Stock Teórico:</strong> <span id="info-teorico" class="highlight-val">-</span></div>
               <div><strong>Acumulado Actual:</strong> <span id="info-acumulado" class="highlight-val count-val">-</span></div>
@@ -97,6 +99,14 @@
               <div class="form-group">
                 <label for="new-product-marca">Marca</label>
                 <input type="text" id="new-product-marca" required>
+              </div>
+              <div class="form-group">
+                <label for="new-product-talle">Talle <span aria-label="opcional">(opcional)</span></label>
+                <input type="text" id="new-product-talle" placeholder="Ej: M, 42, L">
+              </div>
+              <div class="form-group">
+                <label for="new-product-color">Color <span aria-label="opcional">(opcional)</span></label>
+                <input type="text" id="new-product-color" placeholder="Ej: negro">
               </div>
               <div class="form-group">
                 <label for="new-product-ubicacion">Ubicación</label>
@@ -180,6 +190,8 @@
                 <th>Código</th>
                 <th>Descripción</th>
                 <th>Marca</th>
+                <th>Talle</th>
+                <th>Color</th>
                 <th>Ubicación</th>
                 <th>Stock Teórico</th>
                 <th>Stock Físico</th>

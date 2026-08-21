@@ -166,6 +166,8 @@ function buildProductsFromImport(rows) {
       codigo,
       descripcion: String(findImportValue(row, ['descripcion', 'descripcion_producto', 'producto', 'nombre', 'detalle', 'articulo']) || `Producto importado (${codigo})`).trim(),
       marca: String(findImportValue(row, ['marca', 'brand']) || 'Sin marca').trim(),
+      talle: String(findImportValue(row, ['talle', 'tamano', 'tamaño', 'size']) || '').trim(),
+      color: String(findImportValue(row, ['color', 'colour']) || '').trim(),
       ubicacion: String(findImportValue(row, ['ubicacion', 'ubicacion_producto', 'deposito', 'sector', 'pasillo']) || 'Sin ubicación').trim(),
       // En archivos de conteo, StockTeorico suele venir en 0 y StockFisico
       // representa el stock real de alta. Tomamos ese valor para no crear
@@ -389,6 +391,8 @@ function openNewProductForm(codigo = '', product = null) {
   document.getElementById('new-product-codigo').value = product ? product.codigo : (codigo || inputCodigo.value.trim());
   document.getElementById('new-product-descripcion').value = product ? product.descripcion : '';
   document.getElementById('new-product-marca').value = product ? product.marca : '';
+  document.getElementById('new-product-talle').value = product ? product.talle || '' : '';
+  document.getElementById('new-product-color').value = product ? product.color || '' : '';
   document.getElementById('new-product-ubicacion').value = product ? product.ubicacion || '' : '';
   document.getElementById('new-product-stock').value = product ? product.stockTeorico : 0;
   document.getElementById('new-product-cantidad').value = 0;
@@ -422,6 +426,8 @@ async function submitNewProduct() {
   const codigo = document.getElementById('new-product-codigo').value.trim();
   const descripcion = document.getElementById('new-product-descripcion').value.trim();
   const marca = document.getElementById('new-product-marca').value.trim();
+  const talle = document.getElementById('new-product-talle').value.trim();
+  const color = document.getElementById('new-product-color').value.trim();
   const ubicacion = document.getElementById('new-product-ubicacion').value.trim();
   const stockTeorico = Number(document.getElementById('new-product-stock').value);
   const cantidad = Number(document.getElementById('new-product-cantidad').value);
@@ -457,6 +463,8 @@ async function submitNewProduct() {
     codigo,
     descripcion,
     marca,
+    talle,
+    color,
     ubicacion,
     stockTeorico
   };
@@ -538,6 +546,8 @@ function searchProduct(codigo) {
 
     document.getElementById('info-desc').textContent = currentProduct.descripcion;
     document.getElementById('info-marca').textContent = currentProduct.marca;
+    document.getElementById('info-talle').textContent = currentProduct.talle || '-';
+    document.getElementById('info-color').textContent = currentProduct.color || '-';
     document.getElementById('info-ubicacion').textContent = currentProduct.ubicacion || 'Sin ubicar';
     document.getElementById('info-teorico').textContent = currentProduct.stockTeorico;
     document.getElementById('info-acumulado').textContent = acumulado;
@@ -650,7 +660,9 @@ function renderReportTable() {
     if (query) {
       const matches = (prod.codigo || '').toLowerCase().includes(query)
         || (prod.descripcion || '').toLowerCase().includes(query)
-        || (prod.marca || '').toLowerCase().includes(query);
+        || (prod.marca || '').toLowerCase().includes(query)
+        || (prod.talle || '').toLowerCase().includes(query)
+        || (prod.color || '').toLowerCase().includes(query);
       if (!matches) return;
     }
     const productKey = normalizeCodigo(prod.codigo);
@@ -686,6 +698,8 @@ function renderReportTable() {
       <td><strong>${prod.codigo}</strong></td>
       <td>${prod.descripcion}</td>
       <td>${prod.marca}</td>
+      <td>${prod.talle || '-'}</td>
+      <td>${prod.color || '-'}</td>
       <td>${prod.ubicacion || '-'}</td>
       <td>${prod.stockTeorico}</td>
       <td><strong>${contado ? stockFisico : '-'}</strong></td>
@@ -747,7 +761,7 @@ function exportToCSV() {
   const physicalMap = getEffectivePhysicalMap();
 
   let csv = "\uFEFF"; // BOM para asegurar caracteres UTF-8 en Excel
-  csv += "Codigo;Descripcion;Marca;Ubicacion;StockTeorico;StockFisico;Diferencia;Estado\n";
+  csv += "Codigo;Descripcion;Marca;Talle;Color;Ubicacion;StockTeorico;StockFisico;Diferencia;Estado\n";
 
   productsDB.forEach(prod => {
     const key = normalizeCodigo(prod.codigo);
@@ -756,7 +770,7 @@ function exportToCSV() {
     const diferencia = stockFisico - prod.stockTeorico;
     let estado = !contado ? 'No Contado' : (diferencia < 0 ? 'Faltante' : (diferencia > 0 ? 'Sobrante' : 'Correcto'));
 
-    csv += `"${prod.codigo}";"${prod.descripcion}";"${prod.marca}";"${prod.ubicacion || ''}";${prod.stockTeorico};${stockFisico};${diferencia};"${estado}"\n`;
+    csv += `"${prod.codigo}";"${prod.descripcion}";"${prod.marca}";"${prod.talle || ''}";"${prod.color || ''}";"${prod.ubicacion || ''}";${prod.stockTeorico};${stockFisico};${diferencia};"${estado}"\n`;
   });
 
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });

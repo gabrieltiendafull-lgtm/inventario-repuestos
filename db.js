@@ -56,11 +56,11 @@ async function run(sql, params = []) {
   if (!usingSupabase) return sqliteRun(sql, params);
   let response;
   if (sql.startsWith('INSERT INTO productos')) {
-    response = await supabase.from('productos').insert({ codigo: params[0], descripcion: params[1], marca: params[2], ubicacion: params[3], stock_teorico: params[4] }).select('id').single();
+    response = await supabase.from('productos').insert({ codigo: params[0], descripcion: params[1], marca: params[2], talle: params[3] || null, color: params[4] || null, ubicacion: params[5], stock_teorico: params[6] }).select('id').single();
   } else if (sql.startsWith('UPDATE productos SET descripcion')) {
-    response = await supabase.from('productos').update({ descripcion: params[0], marca: params[1], ubicacion: params[2], stock_teorico: params[3] }).eq('id', params[4]).select('id');
+    response = await supabase.from('productos').update({ descripcion: params[0], marca: params[1], talle: params[2] || null, color: params[3] || null, ubicacion: params[4], stock_teorico: params[5] }).eq('id', params[6]).select('id');
   } else if (sql.startsWith('UPDATE productos SET codigo')) {
-    response = await supabase.from('productos').update({ codigo: params[0], descripcion: params[1], marca: params[2], ubicacion: params[3], stock_teorico: params[4] }).eq('id', params[5]).select('id');
+    response = await supabase.from('productos').update({ codigo: params[0], descripcion: params[1], marca: params[2], talle: params[3] || null, color: params[4] || null, ubicacion: params[5], stock_teorico: params[6] }).eq('id', params[7]).select('id');
   } else if (sql.startsWith('UPDATE movimientos')) {
     response = await supabase.from('movimientos').update({ codigo: params[0], descripcion: params[1] }).ilike('codigo', params[2]).select('id');
   } else if (sql.startsWith('DELETE FROM movimientos')) {
@@ -86,7 +86,10 @@ async function initializeDb() {
   }
   fs.mkdirSync(dataDir, { recursive: true });
   db = new sqlite3.Database(dbPath, (error) => { if (error) console.error(error.message); });
-  await sqliteRun('CREATE TABLE IF NOT EXISTS productos (id INTEGER PRIMARY KEY AUTOINCREMENT, codigo TEXT UNIQUE NOT NULL, descripcion TEXT NOT NULL, marca TEXT, ubicacion TEXT, stock_teorico REAL DEFAULT 0, activo INTEGER DEFAULT 1, created_at TEXT DEFAULT CURRENT_TIMESTAMP)');
+  await sqliteRun('CREATE TABLE IF NOT EXISTS productos (id INTEGER PRIMARY KEY AUTOINCREMENT, codigo TEXT UNIQUE NOT NULL, descripcion TEXT NOT NULL, marca TEXT, talle TEXT, color TEXT, ubicacion TEXT, stock_teorico REAL DEFAULT 0, activo INTEGER DEFAULT 1, created_at TEXT DEFAULT CURRENT_TIMESTAMP)');
+  const productColumns = await sqliteAll('PRAGMA table_info(productos)');
+  if (!productColumns.some((column) => column.name === 'talle')) await sqliteRun('ALTER TABLE productos ADD COLUMN talle TEXT');
+  if (!productColumns.some((column) => column.name === 'color')) await sqliteRun('ALTER TABLE productos ADD COLUMN color TEXT');
   await sqliteRun("CREATE TABLE IF NOT EXISTS movimientos (id INTEGER PRIMARY KEY AUTOINCREMENT, codigo TEXT NOT NULL, descripcion TEXT, cantidad REAL NOT NULL, usuario TEXT, fecha TEXT, hora TEXT, tipo TEXT DEFAULT 'conteo', created_at TEXT DEFAULT CURRENT_TIMESTAMP)");
   const demoProducts = [
     ['FMPD00812', 'Pastilla de freno delantera', 'Frasle', 'A-01-2', 15], ['FLTF00120', 'Filtro de aceite motor 1.6', 'Fram', 'B-03-1', 40], ['BGB009400', 'Bujía de encendido Iridium', 'NGK', 'A-05-4', 100], ['AMR002100', 'Amortiguador delantero izq.', 'Monroe', 'C-02-1', 8], ['COR005432', 'Correa de distribución 124T', 'Dayco', 'B-01-3', 20]
