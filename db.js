@@ -99,7 +99,7 @@ async function initializeDb() {
       await sqliteRun('INSERT INTO productos (codigo, descripcion, marca, ubicacion, stock_teorico) VALUES (?, ?, ?, ?, ?)', product);
     }
   }
-  console.log(`SQLite listo en: ${dbPath}`);
+  console.warn(`ADVERTENCIA: SQLite listo en: ${dbPath}. Esta base es local y no es persistente en Render; configurá SUPABASE_URL y SUPABASE_SECRET_KEY antes de usar el sistema en producción.`);
 }
 
-module.exports = { initializeDb, all, get, run, storageType: usingSupabase ? 'supabase' : 'sqlite' };
+module.exports = { initializeDb, all, get, run, storageType: usingSupabase ? 'supabase' : 'sqlite', isPersistent: usingSupabase };

@@ -10,17 +10,23 @@ const API_URL = API_BASE.endsWith('/api') ? API_BASE : `${API_BASE}/api`;
 
 async function tryFetch(urls, options) {
   let lastError = null;
-  for (const u of urls) {
-    try {
-      const res = await fetch(u, options);
-      if (res && res.ok) {
-        API.isOnline = true;
-        return res;
+  // Render puede tardar algunos segundos en despertar. Reintentamos antes de
+  // marcar la base como caída, para no dejar cambios sólo en el navegador.
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    for (const u of urls) {
+      try {
+        const res = await fetch(u, options);
+        if (res && res.ok) {
+          API.isOnline = true;
+          return res;
+        }
+        lastError = new Error(`El servidor respondió ${res.status} en ${u}`);
+      } catch (err) {
+        lastError = err;
       }
-      lastError = new Error(`El servidor respondió ${res.status} en ${u}`);
-    } catch (err) {
-      lastError = err;
     }
+
+    if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 1000 * (attempt + 1)));
   }
   API.isOnline = false;
   throw lastError || new Error('No se pudo conectar a ninguna URL');
@@ -29,6 +35,7 @@ async function tryFetch(urls, options) {
 const API = {
   // Se actualiza en cada consulta; evita indicar conexión al usar solo caché local.
   isOnline: false,
+  lastError: null,
   // Datos demo por si la API aún no está conectada
   demoProducts: [
     { codigo: "FMPD00812", descripcion: "Pastilla de freno delantera", marca: "Frasle", stockTeorico: 15, ubicacion: "A-01-2" },
@@ -58,6 +65,16 @@ const API = {
     }
   },
 
+  async fetchHealth() {
+    try {
+      const response = await tryFetch([`${API_URL}/health`, 'http://localhost:3000/api/health']);
+      return await response.json();
+    } catch (err) {
+      this.lastError = err.message;
+      return null;
+    }
+  },
+
   async fetchProducts() {
     const cached = this.readLocal('db_products', null);
 
@@ -66,8 +83,17 @@ const API = {
       const response = await tryFetch(urls);
       const data = await response.json();
       if (Array.isArray(data)) {
-        this.writeLocal('db_products', data);
-        return data;
+        // Nunca descartamos altas o cambios que todavía no llegaron al servidor.
+        const pendingDeletes = new Set(this.readLocal('db_pending_deletes', []).map((code) => String(code).toLowerCase()));
+        const merged = new Map(data
+          .filter((product) => !pendingDeletes.has(String(product.codigo || '').toLowerCase()))
+          .map((product) => [String(product.codigo || '').toLowerCase(), product]));
+        (cached || []).filter((product) => product && product._pending).forEach((product) => {
+          merged.set(String(product.codigo || '').toLowerCase(), product);
+        });
+        const products = Array.from(merged.values());
+        this.writeLocal('db_products', products);
+        return products;
       }
 
       if (cached) return cached;
@@ -87,8 +113,11 @@ const API = {
       const response = await tryFetch(urls);
       const data = await response.json();
       if (Array.isArray(data)) {
-        this.writeLocal('db_counts', data);
-        return data;
+        const pending = cached.filter((count) => count && count._pending);
+        const remoteKeys = new Set(data.map((count) => `${count.codigo}|${count.fecha}|${count.hora}|${count.usuario}|${count.cantidad}`));
+        const counts = [...data, ...pending.filter((count) => !remoteKeys.has(`${count.codigo}|${count.fecha}|${count.hora}|${count.usuario}|${count.cantidad}`))];
+        this.writeLocal('db_counts', counts);
+        return counts;
       }
 
       return cached;
@@ -141,7 +170,8 @@ const API = {
       return body;
     } catch (err) {
       console.error('Modo offline: Producto guardado localmente.', err);
-      return { status: 'offline' };
+      this.lastError = err.message;
+      return { status: 'pending', error: err.message };
     }
   },
 
@@ -186,7 +216,8 @@ const API = {
       this.writeLocal('db_products', updated);
 
       console.error('Modo offline: Producto actualizado localmente.', err);
-      return { status: 'offline' };
+      this.lastError = err.message;
+      return { status: 'pending', error: err.message };
     }
   },
 
@@ -206,7 +237,8 @@ const API = {
       this.writeLocal('db_pending_deletes', pendingDeletes);
 
       console.error('Modo offline: Producto eliminado localmente.', err);
-      return { status: 'offline' };
+      this.lastError = err.message;
+      return { status: 'pending', error: err.message };
     }
   },
 
@@ -242,7 +274,8 @@ const API = {
       return await res.json();
     } catch (err) {
       console.error('Modo offline: Guardado localmente, se sincronizará luego.', err);
-      return { status: 'offline' };
+      this.lastError = err.message;
+      return { status: 'pending', error: err.message };
     }
   }
 };
@@ -340,4 +373,11 @@ API.syncAll = async function () {
   } catch (err) {
     return false;
   }
+};
+
+API.pendingSummary = function () {
+  const pendingProducts = this.readLocal('db_products', []).filter((product) => product && product._pending).length;
+  const pendingCounts = this.readLocal('db_counts', []).filter((count) => count && count._pending).length;
+  const pendingDeletes = this.readLocal('db_pending_deletes', []).length;
+  return { pendingProducts, pendingCounts, pendingDeletes, total: pendingProducts + pendingCounts + pendingDeletes };
 };

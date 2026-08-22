@@ -3,6 +3,7 @@ let currentProduct = null;
 let importedStockMap = {};
 let editingProductCode = null;
 let globalSearchQuery = '';
+let databaseHealth = null;
 
 document.addEventListener('DOMContentLoaded', async () => {
   const savedImport = JSON.parse(localStorage.getItem('db_imported_stock') || '{}');
@@ -35,7 +36,14 @@ async function attemptSync() {
       renderReportTable();
       renderHistoryTable();
     }
-    if (API.isOnline) {
+    const pending = API.pendingSummary();
+    if (pending.total) {
+      statusEl.textContent = `Hay ${pending.total} cambio(s) pendiente(s) de sincronizar`;
+      statusEl.className = 'status-offline';
+    } else if (databaseHealth && databaseHealth.persistent === false) {
+      statusEl.textContent = 'ATENCIÓN: base temporal; los cambios pueden perderse';
+      statusEl.className = 'status-offline';
+    } else if (API.isOnline) {
       statusEl.textContent = `Base compartida lista (${productsDB.length} productos)`;
       statusEl.className = 'status-online';
     } else {
@@ -52,8 +60,16 @@ async function loadDatabase() {
   const statusEl = document.getElementById('sync-status');
   productsDB = await API.fetchProducts();
   await loadCounts();
+  databaseHealth = await API.fetchHealth();
   
-  if (API.isOnline) {
+  const pending = API.pendingSummary();
+  if (pending.total) {
+    statusEl.textContent = `Hay ${pending.total} cambio(s) pendiente(s) de sincronizar`;
+    statusEl.className = 'status-offline';
+  } else if (databaseHealth && databaseHealth.persistent === false) {
+    statusEl.textContent = 'ATENCIÓN: base temporal; los cambios pueden perderse';
+    statusEl.className = 'status-offline';
+  } else if (API.isOnline) {
     statusEl.textContent = `Base compartida lista (${productsDB.length} productos)`;
     statusEl.className = 'status-online';
   } else if (productsDB.length > 0) {
@@ -290,12 +306,16 @@ function setupEvents() {
       const confirmed = confirm(`¿Seguro que querés eliminar "${product.descripcion}" (${product.codigo})?`);
       if (!confirmed) return;
 
-      await API.deleteProduct(product.codigo);
+      const result = await API.deleteProduct(product.codigo);
       productsDB = productsDB.filter(item => item.codigo.toLowerCase() !== product.codigo.toLowerCase());
       localStorage.setItem('db_products', JSON.stringify(productsDB));
       await loadCounts();
       refreshReportViews();
-      alert('Producto eliminado correctamente.');
+      if (result && result.status === 'pending') {
+        alert('No se pudo confirmar la eliminación en el servidor. Quedó pendiente de sincronizar; no cierres ni borres los datos del navegador.');
+      } else {
+        alert('Producto eliminado correctamente.');
+      }
     }
   });
   
@@ -477,6 +497,11 @@ async function submitNewProduct() {
 
     localStorage.setItem('db_products', JSON.stringify(productsDB));
     const result = await API.updateProduct(editingProductCode, newProduct);
+    if (result && result.status === 'pending') {
+      alert('No se pudo guardar el cambio en el servidor. Quedó pendiente de sincronizar; la app no lo confirma como guardado todavía.');
+      await attemptSync();
+      return;
+    }
     if (result && result.error) {
       alert(result.error);
       return;
@@ -504,7 +529,12 @@ async function submitNewProduct() {
 
   productsDB.push(newProduct);
   localStorage.setItem('db_products', JSON.stringify(productsDB));
-  await API.saveProduct(newProduct);
+  const result = await API.saveProduct(newProduct);
+  if (result && result.status === 'pending') {
+    alert('No se pudo guardar el ítem en el servidor. Quedó pendiente de sincronizar; no se confirmó el alta.');
+    await attemptSync();
+    return;
+  }
 
   if (cantidad > 0) {
     const now = new Date();
@@ -591,9 +621,15 @@ async function handleFormSubmit(e) {
   };
 
   // Guardar conteo
-  await API.saveCount(payload);
+  const result = await API.saveCount(payload);
   await loadCounts();
   refreshReportViews();
+
+  if (result && result.status === 'pending') {
+    alert('No se pudo guardar el conteo en el servidor. Quedó pendiente de sincronizar; no se confirmó el registro todavía.');
+    await attemptSync();
+    return;
+  }
 
   // Limpiar y preparar para el siguiente escaneo
   resetForm();
