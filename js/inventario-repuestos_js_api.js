@@ -8,7 +8,7 @@ const API_BASE = window.API_BASE || (() => {
 
 const API_URL = API_BASE.endsWith('/api') ? API_BASE : `${API_BASE}/api`;
 
-async function tryFetch(urls, options) {
+async function tryFetch(urls, options, acceptedStatusCodes = []) {
   let lastError = null;
   // Render puede tardar algunos segundos en despertar. Reintentamos antes de
   // marcar la base como caída, para no dejar cambios sólo en el navegador.
@@ -16,7 +16,7 @@ async function tryFetch(urls, options) {
     for (const u of urls) {
       try {
         const res = await fetch(u, options);
-        if (res && res.ok) {
+        if (res && (res.ok || acceptedStatusCodes.includes(res.status))) {
           API.isOnline = true;
           return res;
         }
@@ -352,8 +352,10 @@ API.syncPendingProducts = async function () {
     const remaining = [];
     for (const codigo of pendingDeletes) {
       try {
-        const res = await tryFetch([`${API_URL}/products/${encodeURIComponent(codigo)}`], { method: 'DELETE' });
-        if (res && res.ok) changed = true;
+        // Un 404 significa que el producto ya no existe en el servidor: la
+        // eliminación ya está resuelta y no debe quedar pendiente para siempre.
+        const res = await tryFetch([`${API_URL}/products/${encodeURIComponent(codigo)}`], { method: 'DELETE' }, [404]);
+        if (res && (res.ok || res.status === 404)) changed = true;
         else remaining.push(codigo);
       } catch (err) {
         remaining.push(codigo);
