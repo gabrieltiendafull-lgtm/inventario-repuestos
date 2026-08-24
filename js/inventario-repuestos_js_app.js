@@ -697,10 +697,11 @@ function switchTab(tab) {
 
 async function createOperator(event) {
   event.preventDefault();
+  const form = event.currentTarget;
   const error = document.getElementById('operator-error'); error.textContent = '';
   try {
     await Auth.request('/auth/users', { method: 'POST', body: JSON.stringify({ nombre: document.getElementById('operator-name').value.trim(), password: document.getElementById('operator-password').value, rol: document.getElementById('operator-role').value }) });
-    event.currentTarget.reset(); await loadOperators();
+    form.reset(); await loadOperators();
   } catch (err) { error.textContent = err.message; }
 }
 
