@@ -19,6 +19,7 @@ const Auth = {
     if (this.token) {
       try {
         this.user = (await this.request('/auth/me')).user;
+        hideAuthScreen();
         return this.user;
       } catch (_) { this.logout(false); }
     }
