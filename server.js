@@ -1,10 +1,13 @@
 const express = require('express');
 const path = require('path');
 const cors = require('cors');
-const { initializeDb, all, get, run, storageType, isPersistent } = require('./db');
+const crypto = require('crypto');
+const { initializeDb, all, get, run, storageType, isPersistent, countUsers, findUserByName, createUser, listUsers, deactivateUser } = require('./db');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const authSecret = process.env.AUTH_SECRET || crypto.randomBytes(32).toString('hex');
+if (!process.env.AUTH_SECRET) console.warn('ADVERTENCIA: AUTH_SECRET no está configurada; las sesiones se cerrarán si el servidor se reinicia.');
 
 app.use(cors({ origin: '*' }));
 app.use(express.json({ limit: '1mb' }));
@@ -31,6 +34,48 @@ function parseBody(req) {
   return {};
 }
 
+function hashPassword(password) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.scryptSync(password, salt, 64).toString('hex');
+  return `${salt}:${hash}`;
+}
+
+function passwordMatches(password, stored) {
+  const [salt, expected] = String(stored || '').split(':');
+  if (!salt || !expected) return false;
+  const actual = crypto.scryptSync(password, salt, 64).toString('hex');
+  return crypto.timingSafeEqual(Buffer.from(actual, 'hex'), Buffer.from(expected, 'hex'));
+}
+
+function createToken(user) {
+  const payload = Buffer.from(JSON.stringify({ id: user.id, nombre: user.nombre, rol: user.rol, exp: Date.now() + 7 * 24 * 60 * 60 * 1000 })).toString('base64url');
+  const signature = crypto.createHmac('sha256', authSecret).update(payload).digest('base64url');
+  return `${payload}.${signature}`;
+}
+
+function readToken(token) {
+  const [payload, signature] = String(token || '').split('.');
+  if (!payload || !signature) return null;
+  const expected = crypto.createHmac('sha256', authSecret).update(payload).digest('base64url');
+  if (signature.length !== expected.length || !crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) return null;
+  try {
+    const user = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+    return user.exp > Date.now() ? user : null;
+  } catch (_) { return null; }
+}
+
+function requireAuth(req, res, next) {
+  const user = readToken(String(req.headers.authorization || '').replace(/^Bearer\s+/i, ''));
+  if (!user) return res.status(401).json({ error: 'Sesión requerida' });
+  req.user = user;
+  next();
+}
+
+function requireAdmin(req, res, next) {
+  if (req.user && req.user.rol === 'admin') return next();
+  return res.status(403).json({ error: 'Solo el administrador puede realizar esta acción' });
+}
+
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
@@ -39,6 +84,52 @@ app.get('/api/health', (req, res) => {
     warning: isPersistent ? null : 'La base SQLite es temporal en Render. Configurá Supabase para evitar pérdidas de datos.'
   });
 });
+
+app.get('/api/auth/status', async (req, res) => {
+  try { res.json({ needsSetup: (await countUsers()) === 0 }); }
+  catch (error) { res.status(500).json({ error: 'No se pudo verificar la configuración de usuarios' }); }
+});
+
+app.post('/api/auth/setup', async (req, res) => {
+  try {
+    if (await countUsers()) return res.status(409).json({ error: 'El administrador ya fue configurado' });
+    const password = String((parseBody(req).password) || '');
+    if (password.length < 8) return res.status(400).json({ error: 'La contraseña debe tener al menos 8 caracteres' });
+    const user = await createUser({ nombre: 'Gabriel', passwordHash: hashPassword(password), rol: 'admin' });
+    res.json({ user: { id: user.id, nombre: user.nombre, rol: user.rol }, token: createToken(user) });
+  } catch (error) { console.error('Error configurando administrador:', error); res.status(500).json({ error: 'No se pudo configurar el administrador. Ejecutá la migración de usuarios en Supabase.' }); }
+});
+
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const body = parseBody(req);
+    const user = await findUserByName(String(body.nombre || '').trim());
+    if (!user || !user.activo || !passwordMatches(String(body.password || ''), user.password_hash)) return res.status(401).json({ error: 'Usuario o contraseña incorrectos' });
+    res.json({ user: { id: user.id, nombre: user.nombre, rol: user.rol }, token: createToken(user) });
+  } catch (error) { res.status(500).json({ error: 'No se pudo iniciar sesión' }); }
+});
+
+app.get('/api/auth/me', requireAuth, (req, res) => res.json({ user: req.user }));
+app.get('/api/auth/users', requireAuth, requireAdmin, async (req, res) => {
+  try { res.json(await listUsers()); } catch (error) { res.status(500).json({ error: 'No se pudieron leer los operadores' }); }
+});
+app.post('/api/auth/users', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const body = parseBody(req); const nombre = String(body.nombre || '').trim(); const password = String(body.password || ''); const rol = body.rol === 'admin' ? 'admin' : 'operador';
+    if (!nombre || password.length < 8) return res.status(400).json({ error: 'Indicá un nombre y una contraseña de al menos 8 caracteres' });
+    if (await findUserByName(nombre)) return res.status(409).json({ error: 'Ya existe un operador con ese nombre' });
+    res.json({ user: await createUser({ nombre, passwordHash: hashPassword(password), rol }) });
+  } catch (error) { res.status(500).json({ error: 'No se pudo crear el operador' }); }
+});
+app.delete('/api/auth/users/:id', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    if (Number(req.params.id) === Number(req.user.id)) return res.status(400).json({ error: 'No podés desactivar tu propio usuario' });
+    await deactivateUser(Number(req.params.id)); res.json({ status: 'deactivated' });
+  } catch (error) { res.status(500).json({ error: 'No se pudo desactivar el operador' }); }
+});
+
+app.use('/api/products', requireAuth);
+app.use('/api/counts', requireAuth);
 
 app.get('/api/products', async (req, res) => {
   try {
@@ -59,7 +150,7 @@ app.get('/api/products', async (req, res) => {
   }
 });
 
-app.post('/api/products', async (req, res) => {
+app.post('/api/products', requireAdmin, async (req, res) => {
   try {
     const body = parseBody(req);
     const payload = body.payload || body;
@@ -121,7 +212,7 @@ app.post('/api/products', async (req, res) => {
   }
 });
 
-app.put('/api/products/:codigo', async (req, res) => {
+app.put('/api/products/:codigo', requireAdmin, async (req, res) => {
   try {
     const codigoOriginal = String(req.params.codigo || '').trim();
     const body = parseBody(req);
@@ -165,7 +256,7 @@ app.put('/api/products/:codigo', async (req, res) => {
   }
 });
 
-app.delete('/api/products/:codigo', async (req, res) => {
+app.delete('/api/products/:codigo', requireAdmin, async (req, res) => {
   try {
     const codigo = String(req.params.codigo || '').trim();
     if (!codigo) {

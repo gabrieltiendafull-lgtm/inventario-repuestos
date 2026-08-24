@@ -91,6 +91,7 @@ async function initializeDb() {
   if (!productColumns.some((column) => column.name === 'talle')) await sqliteRun('ALTER TABLE productos ADD COLUMN talle TEXT');
   if (!productColumns.some((column) => column.name === 'color')) await sqliteRun('ALTER TABLE productos ADD COLUMN color TEXT');
   await sqliteRun("CREATE TABLE IF NOT EXISTS movimientos (id INTEGER PRIMARY KEY AUTOINCREMENT, codigo TEXT NOT NULL, descripcion TEXT, cantidad REAL NOT NULL, usuario TEXT, fecha TEXT, hora TEXT, tipo TEXT DEFAULT 'conteo', created_at TEXT DEFAULT CURRENT_TIMESTAMP)");
+  await sqliteRun("CREATE TABLE IF NOT EXISTS usuarios (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL, rol TEXT NOT NULL DEFAULT 'operador', activo INTEGER NOT NULL DEFAULT 1, created_at TEXT DEFAULT CURRENT_TIMESTAMP)");
   const demoProducts = [
     ['FMPD00812', 'Pastilla de freno delantera', 'Frasle', 'A-01-2', 15], ['FLTF00120', 'Filtro de aceite motor 1.6', 'Fram', 'B-03-1', 40], ['BGB009400', 'Bujía de encendido Iridium', 'NGK', 'A-05-4', 100], ['AMR002100', 'Amortiguador delantero izq.', 'Monroe', 'C-02-1', 8], ['COR005432', 'Correa de distribución 124T', 'Dayco', 'B-01-3', 20]
   ];
@@ -102,4 +103,45 @@ async function initializeDb() {
   console.warn(`ADVERTENCIA: SQLite listo en: ${dbPath}. Esta base es local y no es persistente en Render; configurá SUPABASE_URL y SUPABASE_SECRET_KEY antes de usar el sistema en producción.`);
 }
 
-module.exports = { initializeDb, all, get, run, storageType: usingSupabase ? 'supabase' : 'sqlite', isPersistent: usingSupabase };
+async function countUsers() {
+  if (!usingSupabase) return (await sqliteGet('SELECT COUNT(*) AS total FROM usuarios')).total;
+  const { count, error } = await supabase.from('usuarios').select('*', { count: 'exact', head: true });
+  ensureNoError(error);
+  return count || 0;
+}
+
+async function findUserByName(nombre) {
+  if (!usingSupabase) return sqliteGet('SELECT * FROM usuarios WHERE LOWER(nombre) = LOWER(?)', [nombre]);
+  const { data, error } = await supabase.from('usuarios').select('*').ilike('nombre', nombre).maybeSingle();
+  ensureNoError(error);
+  return data;
+}
+
+async function createUser({ nombre, passwordHash, rol }) {
+  if (!usingSupabase) {
+    const result = await sqliteRun('INSERT INTO usuarios (nombre, password_hash, rol, activo) VALUES (?, ?, ?, 1)', [nombre, passwordHash, rol]);
+    return { id: result.id, nombre, rol, activo: 1 };
+  }
+  const { data, error } = await supabase.from('usuarios').insert({ nombre, password_hash: passwordHash, rol, activo: true }).select('id, nombre, rol, activo').single();
+  ensureNoError(error);
+  return data;
+}
+
+async function listUsers() {
+  if (!usingSupabase) return sqliteAll('SELECT id, nombre, rol, activo, created_at FROM usuarios ORDER BY nombre');
+  const { data, error } = await supabase.from('usuarios').select('id, nombre, rol, activo, created_at').order('nombre');
+  ensureNoError(error);
+  return data || [];
+}
+
+async function deactivateUser(id) {
+  if (!usingSupabase) return sqliteRun('UPDATE usuarios SET activo = 0 WHERE id = ?', [id]);
+  const { data, error } = await supabase.from('usuarios').update({ activo: false }).eq('id', id).select('id');
+  ensureNoError(error);
+  return { changes: (data || []).length };
+}
+
+module.exports = {
+  initializeDb, all, get, run, storageType: usingSupabase ? 'supabase' : 'sqlite', isPersistent: usingSupabase,
+  countUsers, findUserByName, createUser, listUsers, deactivateUser
+};

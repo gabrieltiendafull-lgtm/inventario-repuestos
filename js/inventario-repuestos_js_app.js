@@ -6,6 +6,8 @@ let globalSearchQuery = '';
 let databaseHealth = null;
 
 document.addEventListener('DOMContentLoaded', async () => {
+  await Auth.requireSession();
+  applyUserPermissions();
   const savedImport = JSON.parse(localStorage.getItem('db_imported_stock') || '{}');
   importedStockMap = savedImport || {};
 
@@ -15,6 +17,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   renderHistoryTable();
   attemptSync();
 });
+
+function applyUserPermissions() {
+  const isAdmin = Auth.user && Auth.user.rol === 'admin';
+  document.body.classList.toggle('is-admin', isAdmin);
+  document.getElementById('current-operator').textContent = `Operador activo: ${Auth.user.nombre}`;
+}
 
 // Intento de sincronización: empuja pendientes y refresca vistas si hubo cambios
 async function attemptSync() {
@@ -294,12 +302,14 @@ function setupEvents() {
     const action = actionButton.dataset.action;
 
     if (action === 'edit') {
+      if (Auth.user.rol !== 'admin') return;
       const product = productsDB.find(item => item.codigo.toLowerCase() === codigo.toLowerCase());
       if (product) openNewProductForm(product.codigo, product);
       return;
     }
 
     if (action === 'delete') {
+      if (Auth.user.rol !== 'admin') return;
       const product = productsDB.find(item => item.codigo.toLowerCase() === codigo.toLowerCase());
       if (!product) return;
 
@@ -374,6 +384,9 @@ function setupEvents() {
   if (btnClearSearch) {
     btnClearSearch.addEventListener('click', clearGlobalSearch);
   }
+
+  const operatorForm = document.getElementById('operator-form');
+  if (operatorForm) operatorForm.addEventListener('submit', createOperator);
 }
 
 // Eventos de red y sincronización periódica
@@ -603,7 +616,7 @@ async function handleFormSubmit(e) {
   e.preventDefault();
   
   const cantidad = parseFloat(document.getElementById('input-cantidad').value);
-  const usuario = document.getElementById('input-usuario').value.trim();
+  const usuario = Auth.user.nombre;
 
   if (!currentProduct || isNaN(cantidad) || cantidad <= 0) {
     alert("Ingrese una cantidad válida mayor a 0.");
@@ -615,7 +628,7 @@ async function handleFormSubmit(e) {
     codigo: currentProduct.codigo,
     descripcion: currentProduct.descripcion,
     cantidad: cantidad,
-    usuario: usuario || 'Operador 1',
+    usuario,
     fecha: now.toLocaleDateString(),
     hora: now.toLocaleTimeString()
   };
@@ -675,7 +688,34 @@ function switchTab(tab) {
     document.querySelectorAll('.tab-btn')[2].classList.add('active');
     document.getElementById('sec-historial').classList.add('active');
     renderHistoryTable();
+  } else if (tab === 'usuarios' && Auth.user.rol === 'admin') {
+    document.querySelectorAll('.tab-btn')[3].classList.add('active');
+    document.getElementById('sec-usuarios').classList.add('active');
+    loadOperators();
   }
+}
+
+async function createOperator(event) {
+  event.preventDefault();
+  const error = document.getElementById('operator-error'); error.textContent = '';
+  try {
+    await Auth.request('/auth/users', { method: 'POST', body: JSON.stringify({ nombre: document.getElementById('operator-name').value.trim(), password: document.getElementById('operator-password').value, rol: document.getElementById('operator-role').value }) });
+    event.currentTarget.reset(); await loadOperators();
+  } catch (err) { error.textContent = err.message; }
+}
+
+async function loadOperators() {
+  const tbody = document.querySelector('#table-operators tbody');
+  try {
+    const users = await Auth.request('/auth/users');
+    tbody.innerHTML = users.map((user) => `<tr><td>${user.nombre}</td><td>${user.rol === 'admin' ? 'Administrador' : 'Operador'}</td><td>${user.activo ? 'Activo' : 'Inactivo'}</td><td>${user.activo && user.id !== Auth.user.id ? `<button type="button" class="btn-action btn-delete" onclick="deactivateOperator(${user.id}, '${String(user.nombre).replace(/'/g, '')}')">Desactivar</button>` : '-'}</td></tr>`).join('');
+  } catch (err) { document.getElementById('operator-error').textContent = err.message; }
+}
+
+async function deactivateOperator(id, nombre) {
+  if (!confirm(`¿Desactivar a ${nombre}?`)) return;
+  try { await Auth.request(`/auth/users/${id}`, { method: 'DELETE' }); await loadOperators(); }
+  catch (err) { document.getElementById('operator-error').textContent = err.message; }
 }
 
 function renderReportTable() {

@@ -15,7 +15,7 @@ async function tryFetch(urls, options, acceptedStatusCodes = []) {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     for (const u of urls) {
       try {
-        const res = await fetch(u, options);
+        const res = await fetch(u, { ...options, headers: { ...(options && options.headers ? options.headers : {}), ...(API.authHeaders ? API.authHeaders() : {}) } });
         if (res && (res.ok || acceptedStatusCodes.includes(res.status))) {
           API.isOnline = true;
           return res;

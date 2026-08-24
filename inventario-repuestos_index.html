@@ -10,10 +10,28 @@
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 </head>
 <body>
+  <div id="auth-overlay" class="auth-overlay">
+    <div class="auth-card">
+      <h2>Inventario de Repuestos</h2>
+      <form id="auth-login-form" class="hidden">
+        <p>Ingresá con tu usuario y contraseña.</p>
+        <input id="auth-nombre" placeholder="Usuario" autocomplete="username" required>
+        <input id="auth-password" type="password" placeholder="Contraseña" autocomplete="current-password" required>
+        <p id="auth-error" class="form-error"></p><button type="submit">Ingresar</button>
+      </form>
+      <form id="auth-setup-form" class="hidden">
+        <p>Configuración inicial. Vas a crear la contraseña del administrador <strong>Gabriel</strong>.</p>
+        <input id="setup-password" type="password" placeholder="Contraseña (mínimo 8 caracteres)" autocomplete="new-password" required minlength="8">
+        <input id="setup-password-confirm" type="password" placeholder="Repetir contraseña" autocomplete="new-password" required minlength="8">
+        <p id="setup-error" class="form-error"></p><button type="submit">Crear acceso de Gabriel</button>
+      </form>
+    </div>
+  </div>
   <header>
     <div class="header-title">
       <h1>Conteo de Stock de Repuestos</h1>
       <span id="sync-status" class="status-offline">Cargando base de datos...</span>
+      <button id="btn-logout" class="btn-link" type="button" onclick="Auth.logout()">Salir</button>
     </div>
     <div class="header-search">
       <input id="global-search" type="search" placeholder="Buscar código, descripción o marca..." aria-label="Búsqueda global">
@@ -23,8 +41,9 @@
 
   <nav class="tabs">
     <button class="tab-btn active" onclick="switchTab('conteo')">📦 Conteo Rápido</button>
-    <button class="tab-btn" onclick="switchTab('reporte')">📊 Reporte y Comparativa</button>
-    <button class="tab-btn" onclick="switchTab('historial')">📜 Historial</button>
+    <button class="tab-btn admin-only" onclick="switchTab('reporte')">📊 Reporte y Comparativa</button>
+    <button class="tab-btn admin-only" onclick="switchTab('historial')">📜 Historial</button>
+    <button class="tab-btn admin-only" onclick="switchTab('usuarios')">👥 Operadores</button>
   </nav>
 
   <main>
@@ -71,17 +90,14 @@
             <input type="number" id="input-cantidad" placeholder="0" min="0.01" step="any" required disabled>
           </div>
 
-          <div class="form-group">
-            <label for="input-usuario">Usuario / Operador:</label>
-            <input type="text" id="input-usuario" value="Operador 1" required>
-          </div>
+          <p id="current-operator" class="current-operator"></p>
 
           <button type="submit" id="btn-registrar" disabled>Registrar Conteo (ENTER)</button>
         </form>
 
         <div id="not-found-box" class="not-found-box hidden">
           <p>No se encontró el código <strong id="not-found-code">-</strong>.</p>
-          <button type="button" id="btn-add-new-product" class="btn-secondary">＋ Agregar nuevo ítem</button>
+          <button type="button" id="btn-add-new-product" class="btn-secondary admin-only">＋ Agregar nuevo ítem</button>
         </div>
 
         <div id="new-product-panel" class="new-product-panel hidden">
@@ -128,6 +144,20 @@
           </div>
         </div>
 
+      </div>
+    </section>
+
+    <section id="sec-usuarios" class="tab-content admin-only">
+      <div class="card">
+        <h2>Operadores</h2>
+        <form id="operator-form" class="operator-form">
+          <input id="operator-name" placeholder="Nombre (ej. Facundo)" required>
+          <input id="operator-password" type="password" placeholder="Contraseña (mínimo 8 caracteres)" required minlength="8">
+          <select id="operator-role"><option value="operador">Operador</option><option value="admin">Administrador</option></select>
+          <button type="submit">Crear usuario</button>
+        </form>
+        <p id="operator-error" class="form-error"></p>
+        <div class="table-container"><table id="table-operators"><thead><tr><th>Nombre</th><th>Rol</th><th>Estado</th><th>Acción</th></tr></thead><tbody></tbody></table></div>
       </div>
     </section>
 
@@ -236,6 +266,7 @@
   </main>
 
   <script src="js/inventario-repuestos_js_api.js"></script>
+  <script src="js/inventario-repuestos_js_auth.js"></script>
   <script src="js/inventario-repuestos_js_scanner.js"></script>
   <script src="js/inventario-repuestos_js_app.js"></script>
 </body>

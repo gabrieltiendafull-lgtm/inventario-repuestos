@@ -58,7 +58,9 @@ Supabase:
 3. En **Project Settings > API**, copiá `Project URL` y una **llave secreta**
    (no la publiques ni la agregues al repositorio).
 4. En Render, abrí tu servicio > **Environment** y agregá `SUPABASE_URL` y
-   `SUPABASE_SECRET_KEY`. Luego ejecutá **Manual Deploy > Deploy latest commit**.
+   `SUPABASE_SECRET_KEY`. Agregá también `AUTH_SECRET`, una cadena larga y
+   aleatoria que mantiene las sesiones iniciadas tras reinicios. Luego ejecutá
+   **Manual Deploy > Deploy latest commit**.
 
 Al abrir `/api/health`, la respuesta debe indicar `"database":"supabase"`.
 
@@ -72,6 +74,21 @@ node scripts/import-render-data-to-supabase.js https://inventario-repuestos-q2m2
 
 El script se ejecuta una sola vez y no debe repetirse, porque volvería a copiar
 los conteos.
+
+## Usuarios y permisos
+
+La aplicación requiere acceso por usuario. Antes del primer despliegue con esta
+función, ejecutá en Supabase SQL Editor:
+
+```sql
+-- contenido de supabase/migrations/20260824_add_usuarios.sql
+```
+
+Al abrir la aplicación por primera vez, se pedirá crear la contraseña del
+administrador **Gabriel**. Desde la pestaña **Operadores**, Gabriel puede crear
+usuarios operadores o administradores. Los operadores sólo pueden registrar
+conteos; los productos, reportes, importaciones y usuarios quedan reservados al
+administrador.
 
 ### Nota importante
 

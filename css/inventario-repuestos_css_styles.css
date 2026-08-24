@@ -52,6 +52,47 @@ h1 {
   font-weight: 600;
 }
 
+.auth-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(15, 23, 42, 0.82);
+}
+
+.auth-card {
+  width: min(100%, 420px);
+  padding: 28px;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 20px 40px rgba(0,0,0,.25);
+}
+
+.auth-card h2, .auth-card p { margin-bottom: 16px; }
+.auth-card input { margin-bottom: 12px; }
+.form-error { min-height: 1.2em; color: #b91c1c; font-weight: 600; }
+.current-operator { margin: 4px 0 14px; padding: 9px 12px; border-radius: 6px; color: #1e40af; background: #dbeafe; font-weight: 600; }
+.operator-form { display: grid; grid-template-columns: 1fr 1fr 150px auto; gap: 10px; margin: 16px 0; }
+.admin-only { display: none !important; }
+body.is-admin .admin-only:not(.tab-content) { display: initial !important; }
+body.is-admin .tab-content.admin-only.active { display: block !important; }
+
+#info-ubicacion {
+  display: inline-block;
+  padding: 3px 8px;
+  border-radius: 5px;
+  background: #fef3c7;
+  color: #92400e;
+  font-size: 1.05em;
+  font-weight: 800;
+}
+
+@media (max-width: 700px) {
+  .operator-form { grid-template-columns: 1fr; }
+}
+
 .tabs {
   display: flex;
   gap: 8px;
