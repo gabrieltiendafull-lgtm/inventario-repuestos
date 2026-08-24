@@ -90,7 +90,10 @@ async function loadDatabase() {
 }
 
 async function loadCounts() {
-  const sharedCounts = await API.fetchCounts();
+  // El historial y los reportes son exclusivos del administrador. El operador
+  // conserva en este dispositivo sus propios registros recientes para poder
+  // continuar trabajando sin pedir acceso al historial compartido.
+  const sharedCounts = Auth.user && Auth.user.rol === 'admin' ? await API.fetchCounts() : [];
   const safeCounts = Array.isArray(sharedCounts) ? sharedCounts : [];
   const localCounts = JSON.parse(localStorage.getItem('db_counts') || '[]');
 
@@ -485,11 +488,9 @@ async function submitNewProduct() {
   const duplicate = productsDB.find(item => item.codigo.toLowerCase() === normalizedCodigo && item.codigo.toLowerCase() !== (editingProductCode || '').toLowerCase());
 
   if (duplicate) {
-    const shouldProceed = confirm(`El código "${codigo}" ya existe para "${duplicate.descripcion}". ¿Deseás continuar igual?`);
-    if (!shouldProceed) {
-      document.getElementById('new-product-codigo').focus();
-      return;
-    }
+    alert(`El código "${codigo}" ya existe para "${duplicate.descripcion}". Solo el administrador puede editar ese repuesto.`);
+    document.getElementById('new-product-codigo').focus();
+    return;
   }
 
   const newProduct = {

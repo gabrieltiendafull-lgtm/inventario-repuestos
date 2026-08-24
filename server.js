@@ -150,7 +150,10 @@ app.get('/api/products', async (req, res) => {
   }
 });
 
-app.post('/api/products', requireAdmin, async (req, res) => {
+// Todos los usuarios autenticados pueden dar de alta repuestos.  Las
+// modificaciones posteriores se mantienen en la ruta PUT, protegida para el
+// administrador.
+app.post('/api/products', async (req, res) => {
   try {
     const body = parseBody(req);
     const payload = body.payload || body;
@@ -168,25 +171,7 @@ app.post('/api/products', requireAdmin, async (req, res) => {
 
     const existing = await get('SELECT * FROM productos WHERE LOWER(codigo) = LOWER(?)', [codigo]);
 
-    if (existing) {
-      await run(
-        'UPDATE productos SET descripcion = ?, marca = ?, talle = ?, color = ?, ubicacion = ?, stock_teorico = ? WHERE id = ?',
-        [descripcion, marca, talle, color, ubicacion, stockTeorico, existing.id]
-      );
-
-      return res.json({
-        status: 'updated',
-        product: {
-          codigo,
-          descripcion,
-          marca,
-          talle,
-          color,
-          ubicacion,
-          stockTeorico
-        }
-      });
-    }
+    if (existing) return res.status(409).json({ error: 'Ya existe un producto con ese código. Solo el administrador puede editarlo.' });
 
     const result = await run(
       'INSERT INTO productos (codigo, descripcion, marca, talle, color, ubicacion, stock_teorico) VALUES (?, ?, ?, ?, ?, ?, ?)',
@@ -244,11 +229,6 @@ app.put('/api/products/:codigo', requireAdmin, async (req, res) => {
       [codigo, descripcion, marca, talle, color, ubicacion, stockTeorico, existing.id]
     );
 
-    await run(
-      'UPDATE movimientos SET codigo = ?, descripcion = ? WHERE LOWER(codigo) = LOWER(?)',
-      [codigo, descripcion, codigoOriginal]
-    );
-
     return res.json({ status: 'updated', codigo, descripcion, marca, talle, color, ubicacion, stockTeorico });
   } catch (error) {
     console.error('Error al actualizar producto:', error);
@@ -268,7 +248,6 @@ app.delete('/api/products/:codigo', requireAdmin, async (req, res) => {
       return res.status(404).json({ error: 'Producto no encontrado' });
     }
 
-    await run('DELETE FROM movimientos WHERE LOWER(codigo) = LOWER(?)', [codigo]);
     await run('DELETE FROM productos WHERE LOWER(codigo) = LOWER(?)', [codigo]);
 
     return res.json({ status: 'deleted', codigo });
@@ -278,7 +257,9 @@ app.delete('/api/products/:codigo', requireAdmin, async (req, res) => {
   }
 });
 
-app.get('/api/counts', async (req, res) => {
+// El historial alimenta los reportes. Los operarios solo registran nuevos
+// ingresos mediante POST; no pueden consultar ni modificar los ya existentes.
+app.get('/api/counts', requireAdmin, async (req, res) => {
   try {
     const rows = await all('SELECT codigo, descripcion, cantidad, usuario, fecha, hora FROM movimientos ORDER BY id DESC');
     res.json(rows.map((row) => ({

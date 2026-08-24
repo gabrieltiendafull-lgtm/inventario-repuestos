@@ -86,9 +86,11 @@ función, ejecutá en Supabase SQL Editor:
 
 Al abrir la aplicación por primera vez, se pedirá crear la contraseña del
 administrador **Gabriel**. Desde la pestaña **Operadores**, Gabriel puede crear
-usuarios operadores o administradores. Los operadores sólo pueden registrar
-conteos; los productos, reportes, importaciones y usuarios quedan reservados al
-administrador.
+usuarios operadores o administradores. Los operadores pueden registrar conteos
+y dar de alta repuestos nuevos. La edición o eliminación de repuestos, los
+reportes, las importaciones y la gestión de usuarios quedan reservados al
+administrador. Los movimientos ya registrados nunca se reescriben cuando se
+edita o elimina un repuesto.
 
 ### Nota importante
 
