@@ -467,7 +467,9 @@ async function submitNewProduct() {
   const ubicacion = document.getElementById('new-product-ubicacion').value.trim();
   const stockTeorico = Number(document.getElementById('new-product-stock').value);
   const cantidad = Number(document.getElementById('new-product-cantidad').value);
-  const usuario = document.getElementById('input-usuario').value.trim() || 'Operador 1';
+  // El usuario se obtiene de la sesión activa; no existe un campo editable
+  // `input-usuario` en este formulario.
+  const usuario = (Auth.user && Auth.user.nombre) || 'Operador 1';
 
   if (!codigo || !descripcion || !marca || !ubicacion) {
     alert('Completá código, descripción, marca y ubicación para crear o editar el item.');
