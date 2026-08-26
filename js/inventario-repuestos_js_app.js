@@ -37,9 +37,11 @@ async function loadDeposits() {
   } catch (_) { /* permite abrir datos antiguos hasta ejecutar la migración */ }
   const selected = document.getElementById('input-deposito');
   const report = document.getElementById('report-deposito');
+  const newProductDeposit = document.getElementById('new-product-deposito');
   const options = depositsDB.map((deposit) => `<option value="${deposit.nombre}">${deposit.nombre}</option>`).join('');
   selected.innerHTML = options;
   report.innerHTML = `<option value="todos">Todos los depósitos</option>${options}`;
+  newProductDeposit.innerHTML = options;
 }
 
 function getSelectedDeposit() { return document.getElementById('input-deposito').value; }
@@ -462,6 +464,7 @@ function openNewProductForm(codigo = '', product = null) {
   document.getElementById('new-product-marca').value = product ? product.marca : '';
   document.getElementById('new-product-talle').value = product ? product.talle || '' : '';
   document.getElementById('new-product-color').value = product ? product.color || '' : '';
+  document.getElementById('new-product-deposito').value = getSelectedDeposit();
   document.getElementById('new-product-ubicacion').value = product ? product.ubicacion || '' : '';
   document.getElementById('new-product-stock').value = product ? product.stockTeorico : 0;
   document.getElementById('new-product-cantidad').value = 0;
@@ -501,6 +504,7 @@ async function submitNewProduct() {
   const marca = document.getElementById('new-product-marca').value.trim();
   const talle = document.getElementById('new-product-talle').value.trim();
   const color = document.getElementById('new-product-color').value.trim();
+  const deposito = document.getElementById('new-product-deposito').value;
   const ubicacion = document.getElementById('new-product-ubicacion').value.trim();
   const stockTeorico = Number(document.getElementById('new-product-stock').value);
   const cantidad = Number(document.getElementById('new-product-cantidad').value);
@@ -508,8 +512,8 @@ async function submitNewProduct() {
   // `input-usuario` en este formulario.
   const usuario = (Auth.user && Auth.user.nombre) || 'Operador 1';
 
-  if (!codigo || !descripcion || !marca || !ubicacion) {
-    alert('Completá código, descripción, marca y ubicación para crear o editar el item.');
+  if (!codigo || !descripcion || !marca || !deposito || !ubicacion) {
+    alert('Completá código, descripción, marca, depósito y ubicación física para crear o editar el item.');
     return;
   }
 
@@ -569,7 +573,7 @@ async function submitNewProduct() {
         usuario,
         fecha: now.toLocaleDateString(),
         hora: now.toLocaleTimeString(),
-        deposito: getSelectedDeposit(), tipo: 'ingreso'
+        deposito, tipo: 'ingreso'
       });
       await loadCounts();
     }
@@ -599,7 +603,7 @@ async function submitNewProduct() {
         usuario,
         fecha: now.toLocaleDateString(),
         hora: now.toLocaleTimeString(),
-        deposito: getSelectedDeposit(), tipo: 'ingreso'
+        deposito, tipo: 'ingreso'
     });
     await loadCounts();
   }
