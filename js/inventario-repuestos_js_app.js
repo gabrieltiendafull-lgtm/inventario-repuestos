@@ -789,7 +789,7 @@ function renderReportTable() {
       <td>${prod.color || '-'}</td>
       <td>${prod.ubicacion || '-'}</td>
       <td>${prod.stockTeorico}</td>
-      <td><strong>${contado ? stockFisico : '-'}</strong></td>
+      <td><strong>${contado ? stockFisico : 0}</strong></td>
       <td style="color: ${diferencia < 0 ? '#dc2626' : (diferencia > 0 ? '#16a34a' : '#475569')}; font-weight: bold;">
         ${contado ? (diferencia > 0 ? '+' + diferencia : diferencia) : '-'}
       </td>
