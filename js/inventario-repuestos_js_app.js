@@ -322,6 +322,13 @@ function setupEvents() {
       const result = await API.deleteProduct(product.codigo);
       productsDB = productsDB.filter(item => item.codigo.toLowerCase() !== product.codigo.toLowerCase());
       localStorage.setItem('db_products', JSON.stringify(productsDB));
+
+      // También quitamos el valor proveniente de una importación de CSV/Excel.
+      // De otro modo, si se vuelve a crear el mismo código, ese stock físico
+      // importado se sumaría aunque el producto y sus conteos se hayan borrado.
+      delete importedStockMap[normalizeCodigo(product.codigo)];
+      localStorage.setItem('db_imported_stock', JSON.stringify(importedStockMap));
+
       await loadCounts();
       refreshReportViews();
       if (result && result.status === 'pending') {
