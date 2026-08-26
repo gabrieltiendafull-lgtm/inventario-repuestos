@@ -22,10 +22,12 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 function applyUserPermissions() {
   const isAdmin = Auth.user && Auth.user.rol === 'admin';
+  const isExitOperator = Auth.user && Auth.user.rol === 'salida';
   document.body.classList.toggle('is-admin', isAdmin);
   document.getElementById('current-operator').textContent = `Operador activo: ${Auth.user.nombre}`;
   document.getElementById('btn-registrar').textContent = Auth.user.rol === 'salida' ? 'Registrar salida (ENTER)' : 'Registrar ingreso (ENTER)';
   document.getElementById('stock-info-label').textContent = Auth.user.rol === 'salida' ? 'Stock disponible:' : 'Stock en depósito:';
+  document.getElementById('btn-add-new-product').hidden = isExitOperator;
 }
 
 async function loadDeposits() {
@@ -443,6 +445,10 @@ function manualSearchProduct() {
 }
 
 function openNewProductForm(codigo = '', product = null) {
+  if (Auth.user && Auth.user.rol === 'salida') {
+    alert('El operador de salida no puede agregar ni editar productos.');
+    return;
+  }
   const panel = document.getElementById('new-product-panel');
   const inputCodigo = document.getElementById('input-codigo');
   const title = document.getElementById('new-product-title');
@@ -486,6 +492,10 @@ function hideNewProductForm() {
 }
 
 async function submitNewProduct() {
+  if (Auth.user && Auth.user.rol === 'salida') {
+    alert('El operador de salida no puede agregar ni editar productos.');
+    return;
+  }
   const codigo = document.getElementById('new-product-codigo').value.trim();
   const descripcion = document.getElementById('new-product-descripcion').value.trim();
   const marca = document.getElementById('new-product-marca').value.trim();

@@ -170,11 +170,13 @@ app.get('/api/products', async (req, res) => {
   }
 });
 
-// Todos los usuarios autenticados pueden dar de alta repuestos.  Las
-// modificaciones posteriores se mantienen en la ruta PUT, protegida para el
-// administrador.
+// Los operadores de ingreso pueden dar de alta repuestos. El perfil de salida
+// se limita a descontar existencias y no puede crear artículos.
 app.post('/api/products', async (req, res) => {
   try {
+    if (req.user.rol === 'salida') {
+      return res.status(403).json({ error: 'El operador de salida no puede agregar productos' });
+    }
     const body = parseBody(req);
     const payload = body.payload || body;
     const codigo = String(payload.codigo || '').trim();
