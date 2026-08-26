@@ -114,8 +114,9 @@ const API = {
       const data = await response.json();
       if (Array.isArray(data)) {
         const pending = cached.filter((count) => count && count._pending);
-        const remoteKeys = new Set(data.map((count) => `${count.codigo}|${count.fecha}|${count.hora}|${count.usuario}|${count.cantidad}`));
-        const counts = [...data, ...pending.filter((count) => !remoteKeys.has(`${count.codigo}|${count.fecha}|${count.hora}|${count.usuario}|${count.cantidad}`))];
+        const movementKey = (count) => `${count.codigo}|${count.fecha}|${count.hora}|${count.usuario}|${count.cantidad}|${count.tipo || 'ingreso'}|${count.deposito || 'Ático'}`;
+        const remoteKeys = new Set(data.map(movementKey));
+        const counts = [...data, ...pending.filter((count) => !remoteKeys.has(movementKey(count)))];
         this.writeLocal('db_counts', counts);
         return counts;
       }
@@ -125,6 +126,23 @@ const API = {
       console.warn('No se pudo traer el historial del backend, usando caché local:', err);
       return cached;
     }
+  },
+
+  async fetchDeposits() {
+    const response = await tryFetch([`${API_URL}/deposits`]);
+    return await response.json();
+  },
+
+  async createDeposit(nombre) {
+    const response = await tryFetch([`${API_URL}/deposits`], {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ nombre })
+    });
+    return await response.json();
+  },
+
+  async fetchStock(codigo, deposito) {
+    const response = await tryFetch([`${API_URL}/stock/${encodeURIComponent(codigo)}?deposito=${encodeURIComponent(deposito)}`]);
+    return await response.json();
   },
 
   async saveProduct(productData) {
@@ -300,7 +318,7 @@ API.syncPendingCounts = async function () {
       const res = await tryFetch([`${API_URL}/counts`], {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ payload: { codigo: item.codigo, descripcion: item.descripcion, cantidad: item.cantidad, usuario: item.usuario, fecha: item.fecha, hora: item.hora } })
+        body: JSON.stringify({ payload: { codigo: item.codigo, descripcion: item.descripcion, cantidad: item.cantidad, usuario: item.usuario, fecha: item.fecha, hora: item.hora, deposito: item.deposito || 'Ático', tipo: item.tipo || 'ingreso' } })
       });
       if (res && res.ok) {
         // remove pending flags

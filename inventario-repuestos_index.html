@@ -81,10 +81,14 @@
               <div><strong>Color:</strong> <span id="info-color">-</span></div>
               <div><strong>Ubicación:</strong> <span id="info-ubicacion">-</span></div>
               <div><strong>Stock Teórico:</strong> <span id="info-teorico" class="highlight-val">-</span></div>
-              <div><strong>Acumulado Actual:</strong> <span id="info-acumulado" class="highlight-val count-val">-</span></div>
+              <div><strong id="stock-info-label">Stock en depósito:</strong> <span id="info-acumulado" class="highlight-val count-val">-</span></div>
             </div>
           </div>
 
+          <div class="form-group">
+            <label for="input-deposito">Depósito:</label>
+            <select id="input-deposito" required onchange="if (currentProduct) searchProduct(currentProduct.codigo)"></select>
+          </div>
           <div class="form-group">
             <label for="input-cantidad">Cantidad Encontrada:</label>
             <input type="number" id="input-cantidad" placeholder="0" min="0.01" step="any" required disabled>
@@ -153,10 +157,18 @@
         <form id="operator-form" class="operator-form">
           <input id="operator-name" placeholder="Nombre (ej. Facundo)" required>
           <input id="operator-password" type="password" placeholder="Contraseña (mínimo 8 caracteres)" required minlength="8">
-          <select id="operator-role"><option value="operador">Operador</option><option value="admin">Administrador</option></select>
+          <select id="operator-role"><option value="operador">Operador de ingreso</option><option value="salida">Operador de salida</option><option value="admin">Administrador</option></select>
           <button type="submit">Crear usuario</button>
         </form>
         <p id="operator-error" class="form-error"></p>
+        <hr>
+        <h3>Depósitos</h3>
+        <form id="deposit-form" class="operator-form">
+          <input id="deposit-name" placeholder="Nombre del depósito (ej. Taller)" required>
+          <button type="submit">Crear depósito</button>
+        </form>
+        <p id="deposit-error" class="form-error"></p>
+        <div class="table-container"><table id="table-deposits"><thead><tr><th>Depósito</th><th>Estado</th></tr></thead><tbody></tbody></table></div>
         <div class="table-container"><table id="table-operators"><thead><tr><th>Nombre</th><th>Rol</th><th>Estado</th><th>Acción</th></tr></thead><tbody></tbody></table></div>
       </div>
     </section>
@@ -203,6 +215,8 @@
         </div>
 
         <div class="filter-group">
+          <label for="report-deposito">Depósito:</label>
+          <select id="report-deposito" onchange="renderReportTable()"></select>
           <label for="filter-status">Filtrar por estado:</label>
           <select id="filter-status" onchange="renderReportTable()">
             <option value="todos">Todos los productos</option>
@@ -252,7 +266,9 @@
                 <th>Fecha y Hora</th>
                 <th>Código</th>
                 <th>Producto</th>
-                <th>Cantidad Contada</th>
+                <th>Tipo</th>
+                <th>Depósito</th>
+                <th>Cantidad</th>
                 <th>Usuario</th>
               </tr>
             </thead>

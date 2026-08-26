@@ -2,7 +2,7 @@ const express = require('express');
 const path = require('path');
 const cors = require('cors');
 const crypto = require('crypto');
-const { initializeDb, all, get, run, storageType, isPersistent, countUsers, findUserByName, createUser, listUsers, deactivateUser } = require('./db');
+const { initializeDb, all, get, run, storageType, isPersistent, countUsers, findUserByName, createUser, listUsers, deactivateUser, listDeposits, createDeposit, getStock, addMovement, listMovements } = require('./db');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -115,7 +115,7 @@ app.get('/api/auth/users', requireAuth, requireAdmin, async (req, res) => {
 });
 app.post('/api/auth/users', requireAuth, requireAdmin, async (req, res) => {
   try {
-    const body = parseBody(req); const nombre = String(body.nombre || '').trim(); const password = String(body.password || ''); const rol = body.rol === 'admin' ? 'admin' : 'operador';
+    const body = parseBody(req); const nombre = String(body.nombre || '').trim(); const password = String(body.password || ''); const rol = ['admin', 'operador', 'salida'].includes(body.rol) ? body.rol : 'operador';
     if (!nombre || password.length < 8) return res.status(400).json({ error: 'Indicá un nombre y una contraseña de al menos 8 caracteres' });
     if (await findUserByName(nombre)) return res.status(409).json({ error: 'Ya existe un operador con ese nombre' });
     res.json({ user: await createUser({ nombre, passwordHash: hashPassword(password), rol }) });
@@ -130,6 +130,26 @@ app.delete('/api/auth/users/:id', requireAuth, requireAdmin, async (req, res) =>
 
 app.use('/api/products', requireAuth);
 app.use('/api/counts', requireAuth);
+app.use('/api/deposits', requireAuth);
+app.use('/api/stock', requireAuth);
+
+app.get('/api/deposits', async (req, res) => {
+  try { res.json(await listDeposits()); } catch (error) { res.status(500).json({ error: 'No se pudieron leer los depósitos' }); }
+});
+app.post('/api/deposits', requireAdmin, async (req, res) => {
+  try {
+    const nombre = String(parseBody(req).nombre || '').trim();
+    if (!nombre) return res.status(400).json({ error: 'Indicá un nombre para el depósito' });
+    res.json(await createDeposit(nombre));
+  } catch (error) { res.status(409).json({ error: 'No se pudo crear el depósito. Revisá que no exista otro con ese nombre.' }); }
+});
+app.get('/api/stock/:codigo', async (req, res) => {
+  try {
+    const deposito = String(req.query.deposito || '').trim();
+    if (!deposito) return res.status(400).json({ error: 'Depósito requerido' });
+    res.json({ stock: await getStock(String(req.params.codigo || '').trim(), deposito) });
+  } catch (error) { res.status(500).json({ error: 'No se pudo consultar el stock' }); }
+});
 
 app.get('/api/products', async (req, res) => {
   try {
@@ -265,7 +285,7 @@ app.delete('/api/products/:codigo', requireAdmin, async (req, res) => {
 // ingresos mediante POST; no pueden consultar ni modificar los ya existentes.
 app.get('/api/counts', requireAdmin, async (req, res) => {
   try {
-    const rows = await all('SELECT codigo, descripcion, cantidad, usuario, fecha, hora FROM movimientos ORDER BY id DESC');
+    const rows = await listMovements();
     res.json(rows.map((row) => ({
       codigo: row.codigo,
       descripcion: row.descripcion,
@@ -273,6 +293,7 @@ app.get('/api/counts', requireAdmin, async (req, res) => {
       usuario: row.usuario,
       fecha: row.fecha,
       hora: row.hora
+      , tipo: row.tipo || 'ingreso', deposito: row.deposito || 'Ático'
     })));
   } catch (error) {
     console.error('Error al leer conteos:', error);
@@ -287,18 +308,20 @@ app.post('/api/counts', async (req, res) => {
     const codigo = String(payload.codigo || '').trim();
     const descripcion = String(payload.descripcion || '').trim();
     const cantidad = Number(payload.cantidad ?? 0);
-    const usuario = String(payload.usuario || 'Operador 1').trim();
+    const usuario = req.user.nombre;
     const fecha = String(payload.fecha || new Date().toISOString().slice(0, 10));
     const hora = String(payload.hora || new Date().toLocaleTimeString('es-AR'));
+    const deposito = String(payload.deposito || '').trim();
+    const tipo = String(payload.tipo || 'ingreso').trim() === 'salida' ? 'salida' : 'ingreso';
 
-    if (!codigo || !Number.isFinite(cantidad) || cantidad <= 0) {
+    if (!codigo || !deposito || !Number.isFinite(cantidad) || cantidad <= 0) {
       return res.status(400).json({ error: 'Cantidad inválida' });
     }
+    if (req.user.rol === 'operador' && tipo !== 'ingreso') return res.status(403).json({ error: 'Este usuario solo puede registrar ingresos' });
+    if (req.user.rol === 'salida' && tipo !== 'salida') return res.status(403).json({ error: 'Este usuario solo puede registrar salidas' });
+    if (tipo === 'salida' && await getStock(codigo, deposito) < cantidad) return res.status(400).json({ error: 'La salida supera el stock disponible en este depósito' });
 
-    await run(
-      'INSERT INTO movimientos (codigo, descripcion, cantidad, usuario, fecha, hora, tipo) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      [codigo, descripcion, cantidad, usuario, fecha, hora, 'conteo']
-    );
+    await addMovement({ codigo, descripcion, cantidad, usuario, fecha, hora, tipo, deposito });
 
     res.json({ status: 'success' });
   } catch (error) {

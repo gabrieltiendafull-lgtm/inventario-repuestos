@@ -22,8 +22,8 @@ function sqliteGet(sql, params = []) {
   return new Promise((resolve, reject) => db.get(sql, params, (error, row) => error ? reject(error) : resolve(row)));
 }
 
-function sqliteAll(sql) {
-  return new Promise((resolve, reject) => db.all(sql, (error, rows) => error ? reject(error) : resolve(rows || [])));
+function sqliteAll(sql, params = []) {
+  return new Promise((resolve, reject) => db.all(sql, params, (error, rows) => error ? reject(error) : resolve(rows || [])));
 }
 
 function ensureNoError(error) {
@@ -91,6 +91,11 @@ async function initializeDb() {
   if (!productColumns.some((column) => column.name === 'talle')) await sqliteRun('ALTER TABLE productos ADD COLUMN talle TEXT');
   if (!productColumns.some((column) => column.name === 'color')) await sqliteRun('ALTER TABLE productos ADD COLUMN color TEXT');
   await sqliteRun("CREATE TABLE IF NOT EXISTS movimientos (id INTEGER PRIMARY KEY AUTOINCREMENT, codigo TEXT NOT NULL, descripcion TEXT, cantidad REAL NOT NULL, usuario TEXT, fecha TEXT, hora TEXT, tipo TEXT DEFAULT 'conteo', created_at TEXT DEFAULT CURRENT_TIMESTAMP)");
+  const movementColumns = await sqliteAll('PRAGMA table_info(movimientos)');
+  if (!movementColumns.some((column) => column.name === 'deposito')) await sqliteRun("ALTER TABLE movimientos ADD COLUMN deposito TEXT NOT NULL DEFAULT 'Ático'");
+  await sqliteRun("UPDATE movimientos SET deposito = 'Ático' WHERE deposito IS NULL OR TRIM(deposito) = ''");
+  await sqliteRun('CREATE TABLE IF NOT EXISTS depositos (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT UNIQUE NOT NULL, activo INTEGER NOT NULL DEFAULT 1, created_at TEXT DEFAULT CURRENT_TIMESTAMP)');
+  await sqliteRun("INSERT OR IGNORE INTO depositos (nombre, activo) VALUES ('Ático', 1)");
   await sqliteRun("CREATE TABLE IF NOT EXISTS usuarios (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL, rol TEXT NOT NULL DEFAULT 'operador', activo INTEGER NOT NULL DEFAULT 1, created_at TEXT DEFAULT CURRENT_TIMESTAMP)");
   const demoProducts = [
     ['FMPD00812', 'Pastilla de freno delantera', 'Frasle', 'A-01-2', 15], ['FLTF00120', 'Filtro de aceite motor 1.6', 'Fram', 'B-03-1', 40], ['BGB009400', 'Bujía de encendido Iridium', 'NGK', 'A-05-4', 100], ['AMR002100', 'Amortiguador delantero izq.', 'Monroe', 'C-02-1', 8], ['COR005432', 'Correa de distribución 124T', 'Dayco', 'B-01-3', 20]
@@ -101,6 +106,43 @@ async function initializeDb() {
     }
   }
   console.warn(`ADVERTENCIA: SQLite listo en: ${dbPath}. Esta base es local y no es persistente en Render; configurá SUPABASE_URL y SUPABASE_SECRET_KEY antes de usar el sistema en producción.`);
+}
+
+async function listDeposits() {
+  if (!usingSupabase) return sqliteAll('SELECT id, nombre, activo FROM depositos WHERE activo = 1 ORDER BY nombre');
+  const { data, error } = await supabase.from('depositos').select('id, nombre, activo').eq('activo', true).order('nombre');
+  ensureNoError(error); return data || [];
+}
+
+async function createDeposit(nombre) {
+  if (!usingSupabase) {
+    const result = await sqliteRun('INSERT INTO depositos (nombre, activo) VALUES (?, 1)', [nombre]);
+    return { id: result.id, nombre, activo: 1 };
+  }
+  const { data, error } = await supabase.from('depositos').insert({ nombre, activo: true }).select('id, nombre, activo').single();
+  ensureNoError(error); return data;
+}
+
+async function getStock(codigo, deposito) {
+  if (!usingSupabase) {
+    const row = await sqliteGet("SELECT COALESCE(SUM(CASE WHEN tipo = 'salida' THEN -cantidad ELSE cantidad END), 0) AS stock FROM movimientos WHERE LOWER(codigo) = LOWER(?) AND LOWER(deposito) = LOWER(?)", [codigo, deposito]);
+    return Number(row && row.stock || 0);
+  }
+  const { data, error } = await supabase.from('movimientos').select('cantidad, tipo').ilike('codigo', codigo).ilike('deposito', deposito);
+  ensureNoError(error);
+  return (data || []).reduce((total, item) => total + (item.tipo === 'salida' ? -Number(item.cantidad) : Number(item.cantidad)), 0);
+}
+
+async function addMovement({ codigo, descripcion, cantidad, usuario, fecha, hora, tipo, deposito }) {
+  if (!usingSupabase) return sqliteRun('INSERT INTO movimientos (codigo, descripcion, cantidad, usuario, fecha, hora, tipo, deposito) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', [codigo, descripcion, cantidad, usuario, fecha, hora, tipo, deposito]);
+  const { data, error } = await supabase.from('movimientos').insert({ codigo, descripcion, cantidad, usuario, fecha, hora, tipo, deposito }).select('id').single();
+  ensureNoError(error); return { id: data.id, changes: 1 };
+}
+
+async function listMovements() {
+  if (!usingSupabase) return sqliteAll('SELECT codigo, descripcion, cantidad, usuario, fecha, hora, tipo, deposito FROM movimientos ORDER BY id DESC');
+  const { data, error } = await supabase.from('movimientos').select('codigo, descripcion, cantidad, usuario, fecha, hora, tipo, deposito').order('id', { ascending: false });
+  ensureNoError(error); return data || [];
 }
 
 async function countUsers() {
@@ -143,5 +185,6 @@ async function deactivateUser(id) {
 
 module.exports = {
   initializeDb, all, get, run, storageType: usingSupabase ? 'supabase' : 'sqlite', isPersistent: usingSupabase,
-  countUsers, findUserByName, createUser, listUsers, deactivateUser
+  countUsers, findUserByName, createUser, listUsers, deactivateUser,
+  listDeposits, createDeposit, getStock, addMovement, listMovements
 };

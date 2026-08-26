@@ -4,6 +4,7 @@ let importedStockMap = {};
 let editingProductCode = null;
 let globalSearchQuery = '';
 let databaseHealth = null;
+let depositsDB = [{ nombre: 'Ático' }];
 
 document.addEventListener('DOMContentLoaded', async () => {
   await Auth.requireSession();
@@ -11,6 +12,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const savedImport = JSON.parse(localStorage.getItem('db_imported_stock') || '{}');
   importedStockMap = savedImport || {};
 
+  await loadDeposits();
   await loadDatabase();
   setupEvents();
   renderReportTable();
@@ -22,7 +24,23 @@ function applyUserPermissions() {
   const isAdmin = Auth.user && Auth.user.rol === 'admin';
   document.body.classList.toggle('is-admin', isAdmin);
   document.getElementById('current-operator').textContent = `Operador activo: ${Auth.user.nombre}`;
+  document.getElementById('btn-registrar').textContent = Auth.user.rol === 'salida' ? 'Registrar salida (ENTER)' : 'Registrar ingreso (ENTER)';
+  document.getElementById('stock-info-label').textContent = Auth.user.rol === 'salida' ? 'Stock disponible:' : 'Stock en depósito:';
 }
+
+async function loadDeposits() {
+  try {
+    const data = await API.fetchDeposits();
+    if (Array.isArray(data) && data.length) depositsDB = data;
+  } catch (_) { /* permite abrir datos antiguos hasta ejecutar la migración */ }
+  const selected = document.getElementById('input-deposito');
+  const report = document.getElementById('report-deposito');
+  const options = depositsDB.map((deposit) => `<option value="${deposit.nombre}">${deposit.nombre}</option>`).join('');
+  selected.innerHTML = options;
+  report.innerHTML = `<option value="todos">Todos los depósitos</option>${options}`;
+}
+
+function getSelectedDeposit() { return document.getElementById('input-deposito').value; }
 
 // Intento de sincronización: empuja pendientes y refresca vistas si hubo cambios
 async function attemptSync() {
@@ -100,7 +118,7 @@ async function loadCounts() {
   const mergedCounts = [...(Array.isArray(localCounts) ? localCounts : []), ...safeCounts]
     .filter(Boolean)
     .reduce((acc, item) => {
-      const key = `${item.codigo || ''}|${item.fecha || ''}|${item.hora || ''}|${item.usuario || ''}|${Number(item.cantidad) || 0}`;
+      const key = `${item.codigo || ''}|${item.fecha || ''}|${item.hora || ''}|${item.usuario || ''}|${Number(item.cantidad) || 0}|${item.tipo || 'ingreso'}|${item.deposito || 'Ático'}`;
       if (!acc.has(key)) acc.set(key, item);
       return acc;
     }, new Map());
@@ -269,19 +287,20 @@ function clearImportedStock() {
   alert('Se limpiaron los datos importados del stock físico.');
 }
 
-function getEffectivePhysicalMap() {
+function getEffectivePhysicalMap(deposito = document.getElementById('report-deposito')?.value || 'todos') {
   const localCounts = JSON.parse(localStorage.getItem('db_counts') || '[]');
   const physicalMap = {};
 
-  Object.entries(importedStockMap).forEach(([key, value]) => {
+  // Las importaciones antiguas no tenían depósito: se conservan en Ático.
+  if (deposito === 'todos' || deposito === 'Ático') Object.entries(importedStockMap).forEach(([key, value]) => {
     const normalizedKey = normalizeCodigo(key);
     physicalMap[normalizedKey] = Number(value || 0);
   });
 
-  localCounts.forEach((item) => {
+  localCounts.filter((item) => deposito === 'todos' || String(item.deposito || 'Ático').toLowerCase() === deposito.toLowerCase()).forEach((item) => {
     if (!item || !item.codigo) return;
     const key = normalizeCodigo(item.codigo);
-    physicalMap[key] = (physicalMap[key] || 0) + Number(item.cantidad || 0);
+    physicalMap[key] = (physicalMap[key] || 0) + (item.tipo === 'salida' ? -1 : 1) * Number(item.cantidad || 0);
   });
 
   return physicalMap;
@@ -392,7 +411,8 @@ function setupEvents() {
   }
 
   if (btnClearSearch) {
-    btnClearSearch.addEventListener('click', clearGlobalSearch);
+  btnClearSearch.addEventListener('click', clearGlobalSearch);
+  document.getElementById('deposit-form').addEventListener('submit', createDeposit);
   }
 
   const operatorForm = document.getElementById('operator-form');
@@ -538,7 +558,8 @@ async function submitNewProduct() {
         cantidad,
         usuario,
         fecha: now.toLocaleDateString(),
-        hora: now.toLocaleTimeString()
+        hora: now.toLocaleTimeString(),
+        deposito: getSelectedDeposit(), tipo: 'ingreso'
       });
       await loadCounts();
     }
@@ -565,9 +586,10 @@ async function submitNewProduct() {
       codigo,
       descripcion,
       cantidad,
-      usuario,
-      fecha: now.toLocaleDateString(),
-      hora: now.toLocaleTimeString()
+        usuario,
+        fecha: now.toLocaleDateString(),
+        hora: now.toLocaleTimeString(),
+        deposito: getSelectedDeposit(), tipo: 'ingreso'
     });
     await loadCounts();
   }
@@ -578,14 +600,14 @@ async function submitNewProduct() {
   resetForm();
 }
 
-function getAccumulatedCount(codigo) {
+function getAccumulatedCount(codigo, deposito = getSelectedDeposit()) {
   const history = JSON.parse(localStorage.getItem('db_counts') || '[]');
   return history
-    .filter(item => item.codigo.toLowerCase() === codigo.toLowerCase())
-    .reduce((sum, item) => sum + item.cantidad, 0);
+    .filter(item => item.codigo.toLowerCase() === codigo.toLowerCase() && String(item.deposito || 'Ático').toLowerCase() === deposito.toLowerCase())
+    .reduce((sum, item) => sum + (item.tipo === 'salida' ? -Number(item.cantidad) : Number(item.cantidad)), 0);
 }
 
-function searchProduct(codigo) {
+async function searchProduct(codigo) {
   if (!codigo) return;
   
   currentProduct = productsDB.find(p => p.codigo.toLowerCase() === codigo.toLowerCase());
@@ -595,13 +617,16 @@ function searchProduct(codigo) {
   const btnRegistrar = document.getElementById('btn-registrar');
 
   if (currentProduct) {
-    const acumulado = getAccumulatedCount(currentProduct.codigo);
+    let acumulado = getAccumulatedCount(currentProduct.codigo);
+    if (Auth.user.rol === 'salida') {
+      try { acumulado = Number((await API.fetchStock(currentProduct.codigo, getSelectedDeposit())).stock || 0); } catch (_) { /* el servidor validará la salida al confirmar */ }
+    }
 
     document.getElementById('info-desc').textContent = currentProduct.descripcion;
     document.getElementById('info-marca').textContent = currentProduct.marca;
     document.getElementById('info-talle').textContent = currentProduct.talle || '-';
     document.getElementById('info-color').textContent = currentProduct.color || '-';
-    document.getElementById('info-ubicacion').textContent = currentProduct.ubicacion || 'Sin ubicar';
+    document.getElementById('info-ubicacion').textContent = getSelectedDeposit();
     document.getElementById('info-teorico').textContent = currentProduct.stockTeorico;
     document.getElementById('info-acumulado').textContent = acumulado;
     
@@ -627,6 +652,8 @@ async function handleFormSubmit(e) {
   
   const cantidad = parseFloat(document.getElementById('input-cantidad').value);
   const usuario = Auth.user.nombre;
+  const deposito = getSelectedDeposit();
+  const tipo = Auth.user.rol === 'salida' ? 'salida' : 'ingreso';
 
   if (!currentProduct || isNaN(cantidad) || cantidad <= 0) {
     alert("Ingrese una cantidad válida mayor a 0.");
@@ -634,13 +661,21 @@ async function handleFormSubmit(e) {
   }
 
   const now = new Date();
+  if (tipo === 'salida') {
+    const available = await API.fetchStock(currentProduct.codigo, deposito);
+    if (Number(available.stock || 0) < cantidad) {
+      alert(`Stock insuficiente en ${deposito}. Disponible: ${available.stock || 0}.`);
+      return;
+    }
+  }
+
   const payload = {
     codigo: currentProduct.codigo,
     descripcion: currentProduct.descripcion,
     cantidad: cantidad,
     usuario,
     fecha: now.toLocaleDateString(),
-    hora: now.toLocaleTimeString()
+    hora: now.toLocaleTimeString(), deposito, tipo
   };
 
   // Guardar conteo
@@ -702,7 +737,23 @@ function switchTab(tab) {
     document.querySelectorAll('.tab-btn')[3].classList.add('active');
     document.getElementById('sec-usuarios').classList.add('active');
     loadOperators();
+    renderDeposits();
   }
+}
+
+async function createDeposit(event) {
+  event.preventDefault();
+  const error = document.getElementById('deposit-error'); error.textContent = '';
+  try {
+    await API.createDeposit(document.getElementById('deposit-name').value.trim());
+    document.getElementById('deposit-form').reset();
+    await loadDeposits(); renderDeposits();
+  } catch (err) { error.textContent = err.message; }
+}
+
+function renderDeposits() {
+  const tbody = document.querySelector('#table-deposits tbody');
+  if (tbody) tbody.innerHTML = depositsDB.map((deposit) => `<tr><td>${deposit.nombre}</td><td>${deposit.activo === false ? 'Inactivo' : 'Activo'}</td></tr>`).join('');
 }
 
 async function createOperator(event) {
@@ -719,7 +770,8 @@ async function loadOperators() {
   const tbody = document.querySelector('#table-operators tbody');
   try {
     const users = await Auth.request('/auth/users');
-    tbody.innerHTML = users.map((user) => `<tr><td>${user.nombre}</td><td>${user.rol === 'admin' ? 'Administrador' : 'Operador'}</td><td>${user.activo ? 'Activo' : 'Inactivo'}</td><td>${user.activo && user.id !== Auth.user.id ? `<button type="button" class="btn-action btn-delete" onclick="deactivateOperator(${user.id}, '${String(user.nombre).replace(/'/g, '')}')">Desactivar</button>` : '-'}</td></tr>`).join('');
+    const roleName = { admin: 'Administrador', operador: 'Operador de ingreso', salida: 'Operador de salida' };
+    tbody.innerHTML = users.map((user) => `<tr><td>${user.nombre}</td><td>${roleName[user.rol] || user.rol}</td><td>${user.activo ? 'Activo' : 'Inactivo'}</td><td>${user.activo && user.id !== Auth.user.id ? `<button type="button" class="btn-action btn-delete" onclick="deactivateOperator(${user.id}, '${String(user.nombre).replace(/'/g, '')}')">Desactivar</button>` : '-'}</td></tr>`).join('');
   } catch (err) { document.getElementById('operator-error').textContent = err.message; }
 }
 
@@ -820,7 +872,9 @@ function renderHistoryTable() {
       <td>${item.fecha} ${item.hora || ''}</td>
       <td><strong>${item.codigo}</strong></td>
       <td>${item.descripcion || '-'}</td>
-      <td><strong style="color: #2563eb;">${item.cantidad}</strong></td>
+      <td>${item.tipo === 'salida' ? 'Salida' : 'Ingreso'}</td>
+      <td>${item.deposito || 'Ático'}</td>
+      <td><strong style="color: ${item.tipo === 'salida' ? '#dc2626' : '#2563eb'};">${item.tipo === 'salida' ? '-' : '+'}${item.cantidad}</strong></td>
       <td>${item.usuario}</td>
     `;
     tbody.appendChild(row);
