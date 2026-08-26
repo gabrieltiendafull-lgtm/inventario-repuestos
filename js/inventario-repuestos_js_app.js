@@ -399,7 +399,7 @@ function setupEvents() {
     globalSearchInput.addEventListener('input', () => {
       globalSearchQuery = (globalSearchInput.value || '').trim().toLowerCase();
       // Navegar a la pestaña reporte si hay texto y no está visible
-      if (globalSearchQuery && !document.getElementById('sec-reporte').classList.contains('active')) {
+      if (Auth.user && Auth.user.rol === 'admin' && globalSearchQuery && !document.getElementById('sec-reporte').classList.contains('active')) {
         switchTab('reporte');
       }
       renderReportTable();
@@ -728,6 +728,8 @@ function resetForm() {
 }
 
 function switchTab(tab) {
+  if (tab !== 'conteo' && (!Auth.user || Auth.user.rol !== 'admin')) return;
+
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
   document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
   
