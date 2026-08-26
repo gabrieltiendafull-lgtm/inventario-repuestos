@@ -222,9 +222,18 @@ const API = {
   },
 
   async deleteProduct(codigo) {
+    const normalizedCodigo = String(codigo || '').toLowerCase();
     const products = this.readLocal('db_products', []);
-    const filtered = products.filter(item => item.codigo.toLowerCase() !== String(codigo).toLowerCase());
+    const filtered = products.filter(item => String(item.codigo || '').toLowerCase() !== normalizedCodigo);
     this.writeLocal('db_products', filtered);
+
+    // La eliminación debe incluir el historial local del producto. Esto evita
+    // que un escaneo posterior reutilice conteos de un producto ya borrado.
+    const counts = this.readLocal('db_counts', []);
+    this.writeLocal('db_counts', counts.filter(item => (
+      String(item && item.codigo || '').toLowerCase() !== normalizedCodigo
+    )));
+
     try {
       const urls = [`${API_URL}/products/${encodeURIComponent(codigo)}`];
       const options = { method: 'DELETE' };

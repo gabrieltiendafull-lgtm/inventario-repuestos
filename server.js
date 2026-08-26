@@ -248,9 +248,13 @@ app.delete('/api/products/:codigo', requireAdmin, async (req, res) => {
       return res.status(404).json({ error: 'Producto no encontrado' });
     }
 
+    // Un producto eliminado no debe conservar movimientos: de lo contrario,
+    // al volver a crear o escanear el mismo código se acumulan cantidades de
+    // la versión anterior. La misma consulta funciona con SQLite y Supabase.
+    const deletedCounts = await run('DELETE FROM movimientos WHERE LOWER(codigo) = LOWER(?)', [codigo]);
     await run('DELETE FROM productos WHERE LOWER(codigo) = LOWER(?)', [codigo]);
 
-    return res.json({ status: 'deleted', codigo });
+    return res.json({ status: 'deleted', codigo, deletedCounts: deletedCounts.changes });
   } catch (error) {
     console.error('Error al eliminar producto:', error);
     res.status(500).json({ error: 'No se pudo eliminar el producto' });
