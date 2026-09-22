@@ -63,8 +63,6 @@ async function run(sql, params = []) {
     response = await supabase.from('productos').update({ codigo: params[0], descripcion: params[1], marca: params[2], talle: params[3] || null, color: params[4] || null, ubicacion: params[5], stock_teorico: params[6] }).eq('id', params[7]).select('id');
   } else if (sql.startsWith('UPDATE movimientos')) {
     response = await supabase.from('movimientos').update({ codigo: params[0], descripcion: params[1] }).ilike('codigo', params[2]).select('id');
-  } else if (sql.startsWith('DELETE FROM movimientos')) {
-    response = await supabase.from('movimientos').delete().ilike('codigo', params[0]).select('id');
   } else if (sql.startsWith('DELETE FROM productos')) {
     response = await supabase.from('productos').delete().ilike('codigo', params[0]).select('id');
   } else if (sql.startsWith('INSERT INTO movimientos')) {

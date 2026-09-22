@@ -270,13 +270,12 @@ app.delete('/api/products/:codigo', requireAdmin, async (req, res) => {
       return res.status(404).json({ error: 'Producto no encontrado' });
     }
 
-    // Un producto eliminado no debe conservar movimientos: de lo contrario,
-    // al volver a crear o escanear el mismo código se acumulan cantidades de
-    // la versión anterior. La misma consulta funciona con SQLite y Supabase.
-    const deletedCounts = await run('DELETE FROM movimientos WHERE LOWER(codigo) = LOWER(?)', [codigo]);
+    // El historial es un registro contable: nunca debe borrarse al eliminar
+    // un producto. Así se puede auditar cualquier conteo anterior, incluso si
+    // el artículo se da de baja o se vuelve a crear con el mismo código.
     await run('DELETE FROM productos WHERE LOWER(codigo) = LOWER(?)', [codigo]);
 
-    return res.json({ status: 'deleted', codigo, deletedCounts: deletedCounts.changes });
+    return res.json({ status: 'deleted', codigo });
   } catch (error) {
     console.error('Error al eliminar producto:', error);
     res.status(500).json({ error: 'No se pudo eliminar el producto' });
