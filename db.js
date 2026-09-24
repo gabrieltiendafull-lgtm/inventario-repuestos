@@ -30,16 +30,33 @@ function ensureNoError(error) {
   if (error) throw new Error(`Supabase: ${error.message}`);
 }
 
+async function fetchAllSupabaseRows(table, selectFields = '*', filterBuilder = null, orderField = 'id', ascending = true) {
+  const pageSize = 1000;
+  let from = 0;
+  let allRows = [];
+  while (true) {
+    let query = supabase.from(table).select(selectFields);
+    if (typeof filterBuilder === 'function') {
+      query = filterBuilder(query);
+    }
+    query = query.order(orderField, { ascending }).range(from, from + pageSize - 1);
+    const { data, error } = await query;
+    ensureNoError(error);
+    if (!data || data.length === 0) break;
+    allRows = allRows.concat(data);
+    if (data.length < pageSize) break;
+    from += pageSize;
+  }
+  return allRows;
+}
+
 async function all(sql) {
   if (!usingSupabase) return sqliteAll(sql);
   if (sql.includes('FROM productos')) {
-    const { data, error } = await supabase.from('productos').select('*').eq('activo', true).order('descripcion');
-    ensureNoError(error);
-    return data;
+    const data = await fetchAllSupabaseRows('productos', '*', (q) => q.eq('activo', true), 'id', true);
+    return data.sort((a, b) => String(a.descripcion || '').localeCompare(String(b.descripcion || '')));
   }
-  const { data, error } = await supabase.from('movimientos')
-    .select('codigo, descripcion, cantidad, usuario, fecha, hora').order('id', { ascending: false });
-  ensureNoError(error);
+  const data = await fetchAllSupabaseRows('movimientos', 'codigo, descripcion, cantidad, usuario, fecha, hora, tipo, deposito', null, 'id', false);
   return data;
 }
 
@@ -126,8 +143,13 @@ async function getStock(codigo, deposito) {
     const row = await sqliteGet("SELECT COALESCE(SUM(CASE WHEN tipo = 'salida' THEN -cantidad ELSE cantidad END), 0) AS stock FROM movimientos WHERE LOWER(codigo) = LOWER(?) AND LOWER(deposito) = LOWER(?)", [codigo, deposito]);
     return Number(row && row.stock || 0);
   }
-  const { data, error } = await supabase.from('movimientos').select('cantidad, tipo').ilike('codigo', codigo).ilike('deposito', deposito);
-  ensureNoError(error);
+  const data = await fetchAllSupabaseRows(
+    'movimientos',
+    'cantidad, tipo',
+    (q) => q.ilike('codigo', codigo).ilike('deposito', deposito),
+    'id',
+    true
+  );
   return (data || []).reduce((total, item) => total + (item.tipo === 'salida' ? -Number(item.cantidad) : Number(item.cantidad)), 0);
 }
 
@@ -139,8 +161,99 @@ async function addMovement({ codigo, descripcion, cantidad, usuario, fecha, hora
 
 async function listMovements() {
   if (!usingSupabase) return sqliteAll('SELECT codigo, descripcion, cantidad, usuario, fecha, hora, tipo, deposito FROM movimientos ORDER BY id DESC');
-  const { data, error } = await supabase.from('movimientos').select('codigo, descripcion, cantidad, usuario, fecha, hora, tipo, deposito').order('id', { ascending: false });
-  ensureNoError(error); return data || [];
+  const data = await fetchAllSupabaseRows('movimientos', 'codigo, descripcion, cantidad, usuario, fecha, hora, tipo, deposito', null, 'id', false);
+  return data || [];
+}
+
+async function upsertProducts(productsList) {
+  if (!productsList || !productsList.length) return { inserted: 0, updated: 0, total: 0 };
+  let inserted = 0;
+  let updated = 0;
+
+  if (!usingSupabase) {
+    for (const p of productsList) {
+      const codigo = String(p.codigo || '').trim();
+      if (!codigo) continue;
+      const existing = await sqliteGet('SELECT id FROM productos WHERE LOWER(codigo) = LOWER(?)', [codigo]);
+      const stockVal = Number(p.stockTeorico ?? p.stock_teorico ?? p.stock ?? p.cantidad ?? 0);
+      if (existing) {
+        await sqliteRun(
+          'UPDATE productos SET descripcion = ?, marca = ?, talle = ?, color = ?, ubicacion = ?, stock_teorico = ? WHERE id = ?',
+          [p.descripcion || '', p.marca || '', p.talle || null, p.color || null, p.ubicacion || '', stockVal, existing.id]
+        );
+        updated++;
+      } else {
+        await sqliteRun(
+          'INSERT INTO productos (codigo, descripcion, marca, talle, color, ubicacion, stock_teorico) VALUES (?, ?, ?, ?, ?, ?, ?)',
+          [codigo, p.descripcion || `Producto (${codigo})`, p.marca || 'Sin marca', p.talle || null, p.color || null, p.ubicacion || 'Sin ubicación', stockVal]
+        );
+        inserted++;
+      }
+    }
+    return { inserted, updated, total: inserted + updated };
+  }
+
+  for (const p of productsList) {
+    const codigo = String(p.codigo || '').trim();
+    if (!codigo) continue;
+    const existing = await get('SELECT * FROM productos WHERE LOWER(codigo) = LOWER(?)', [codigo]);
+    const stockVal = Number(p.stockTeorico ?? p.stock_teorico ?? p.stock ?? p.cantidad ?? 0);
+    if (existing) {
+      const { error } = await supabase.from('productos').update({
+        descripcion: p.descripcion || existing.descripcion,
+        marca: p.marca || existing.marca,
+        talle: p.talle ?? existing.talle,
+        color: p.color ?? existing.color,
+        ubicacion: p.ubicacion || existing.ubicacion,
+        stock_teorico: stockVal
+      }).eq('id', existing.id);
+      ensureNoError(error);
+      updated++;
+    } else {
+      const { error } = await supabase.from('productos').insert({
+        codigo,
+        descripcion: p.descripcion || `Producto (${codigo})`,
+        marca: p.marca || 'Sin marca',
+        talle: p.talle || null,
+        color: p.color || null,
+        ubicacion: p.ubicacion || 'Sin ubicación',
+        stock_teorico: stockVal
+      });
+      ensureNoError(error);
+      inserted++;
+    }
+  }
+  return { inserted, updated, total: inserted + updated };
+}
+
+async function addMovementsBatch(movementsList) {
+  if (!movementsList || !movementsList.length) return { inserted: 0 };
+  if (!usingSupabase) {
+    for (const m of movementsList) {
+      await sqliteRun(
+        'INSERT INTO movimientos (codigo, descripcion, cantidad, usuario, fecha, hora, tipo, deposito) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        [m.codigo, m.descripcion || '', Number(m.cantidad || 0), m.usuario, m.fecha, m.hora, m.tipo || 'ingreso', m.deposito || 'Ático']
+      );
+    }
+    return { inserted: movementsList.length };
+  }
+
+  const batchSize = 200;
+  for (let i = 0; i < movementsList.length; i += batchSize) {
+    const chunk = movementsList.slice(i, i + batchSize).map(m => ({
+      codigo: m.codigo,
+      descripcion: m.descripcion || null,
+      cantidad: Number(m.cantidad || 0),
+      usuario: m.usuario || 'Sistema',
+      fecha: m.fecha || new Date().toISOString().slice(0, 10),
+      hora: m.hora || new Date().toLocaleTimeString('es-AR'),
+      tipo: m.tipo || 'ingreso',
+      deposito: m.deposito || 'Ático'
+    }));
+    const { error } = await supabase.from('movimientos').insert(chunk);
+    ensureNoError(error);
+  }
+  return { inserted: movementsList.length };
 }
 
 async function countUsers() {
@@ -184,5 +297,6 @@ async function deactivateUser(id) {
 module.exports = {
   initializeDb, all, get, run, storageType: usingSupabase ? 'supabase' : 'sqlite', isPersistent: usingSupabase,
   countUsers, findUserByName, createUser, listUsers, deactivateUser,
-  listDeposits, createDeposit, getStock, addMovement, listMovements
+  listDeposits, createDeposit, getStock, addMovement, listMovements,
+  upsertProducts, addMovementsBatch
 };

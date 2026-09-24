@@ -184,8 +184,8 @@ function buildImportedStockFromFile(rows) {
   rows.forEach((row) => {
     if (!row || typeof row !== 'object') return;
 
-    const codigo = normalizeCodigo(findImportValue(row, ['codigo', 'cod', 'codigo_repuesto', 'codigo_producto']));
-    const cantidad = findImportValue(row, ['cantidad', 'stock', 'stock_fisico', 'total', 'qty', 'cantidad_fisica', 'fisico', 'actual']);
+    const codigo = normalizeCodigo(findImportValue(row, ['codigo', 'cod', 'codigo_repuesto', 'codigo_producto', 'articulo', 'ref', 'referencia']));
+    const cantidad = findImportValue(row, ['stock_fisico', 'cantidad_fisica', 'fisico', 'cantidad', 'cant', 'stock', 'total', 'qty', 'existencia', 'existencias', 'actual', 'saldo', 'unidades', 'conteo']);
 
     if (!codigo) return;
 
@@ -202,14 +202,21 @@ function buildProductsFromImport(rows) {
   const products = new Map();
 
   rows.forEach((row) => {
-    const codigo = String(findImportValue(row, ['codigo', 'cod', 'codigo_repuesto', 'codigo_producto']) || '').trim();
+    const codigo = String(findImportValue(row, ['codigo', 'cod', 'codigo_repuesto', 'codigo_producto', 'articulo', 'ref', 'referencia']) || '').trim();
     if (!codigo) return;
 
-    const stockTeoricoValue = findImportValue(row, ['stock_teorico', 'teorico', 'stock_inicial']);
-    const stockFisicoValue = findImportValue(row, ['stock_fisico', 'cantidad_fisica', 'fisico', 'cantidad', 'stock', 'total', 'qty']);
+    const stockTeoricoValue = findImportValue(row, ['stock_teorico', 'teorico', 'stock_inicial', 'stock_sistema', 'sistema']);
+    const stockFisicoValue = findImportValue(row, ['stock_fisico', 'cantidad_fisica', 'fisico', 'cantidad', 'cant', 'stock', 'total', 'qty', 'existencia', 'existencias', 'actual', 'saldo', 'unidades', 'conteo']);
     const stockTeorico = parseImportedQuantity(stockTeoricoValue);
     const stockFisico = parseImportedQuantity(stockFisicoValue);
     const key = normalizeCodigo(codigo);
+
+    let finalStockTeorico = 0;
+    if (Number.isFinite(stockTeorico)) {
+      finalStockTeorico = stockTeorico;
+    } else if (Number.isFinite(stockFisico)) {
+      finalStockTeorico = stockFisico;
+    }
 
     products.set(key, {
       codigo,
@@ -218,12 +225,8 @@ function buildProductsFromImport(rows) {
       talle: String(findImportValue(row, ['talle', 'tamano', 'tamaño', 'size']) || '').trim(),
       color: String(findImportValue(row, ['color', 'colour']) || '').trim(),
       ubicacion: String(findImportValue(row, ['ubicacion', 'ubicacion_producto', 'deposito', 'sector', 'pasillo']) || 'Sin ubicación').trim(),
-      // En archivos de conteo, StockTeorico suele venir en 0 y StockFisico
-      // representa el stock real de alta. Tomamos ese valor para no crear
-      // productos nuevos sin existencias.
-      stockTeorico: Number.isFinite(stockTeorico) && stockTeorico !== 0
-        ? stockTeorico
-        : (Number.isFinite(stockFisico) ? stockFisico : 0)
+      stockTeorico: finalStockTeorico,
+      stockFisico: Number.isFinite(stockFisico) ? stockFisico : null
     });
   });
 
@@ -255,25 +258,46 @@ async function importStockFile() {
       importedStockMap = buildImportedStockFromFile(rows);
       localStorage.setItem('db_imported_stock', JSON.stringify(importedStockMap));
 
-      const productCodes = new Set(productsDB.map((product) => normalizeCodigo(product.codigo)));
       const importedProducts = buildProductsFromImport(rows);
-      const newProducts = importedProducts.filter((product) => !productCodes.has(normalizeCodigo(product.codigo)));
-      const productsWithStockToUpdate = importedProducts.filter((product) => {
-        const existing = productsDB.find((item) => normalizeCodigo(item.codigo) === normalizeCodigo(product.codigo));
-        return existing && Number(existing.stockTeorico || 0) === 0 && Number(product.stockTeorico || 0) > 0;
-      });
-      const productsToSave = [...newProducts, ...productsWithStockToUpdate];
-
-      for (const product of productsToSave) {
-        await API.saveProduct(product);
+      if (!importedProducts.length) {
+        alert('No se encontraron productos válidos en el archivo.');
+        return;
       }
 
-      if (productsToSave.length) {
-        await loadDatabase();
+      // 1. Guardar/actualizar productos en lote
+      await API.saveProductsBatch(importedProducts);
+
+      // 2. Registrar los conteos físicos en el depósito seleccionado para persistirlos en la base de datos
+      const selectedDep = document.getElementById('report-deposito')?.value;
+      const targetDeposit = (selectedDep && selectedDep !== 'todos') ? selectedDep : (depositsDB[0]?.nombre || 'Ático');
+
+      const now = new Date();
+      const countsToSave = [];
+      for (const [code, qty] of Object.entries(importedStockMap)) {
+        if (Number(qty) > 0) {
+          const prod = importedProducts.find(p => normalizeCodigo(p.codigo) === code) || productsDB.find(p => normalizeCodigo(p.codigo) === code);
+          countsToSave.push({
+            codigo: (prod && prod.codigo) || code.toUpperCase(),
+            descripcion: (prod && prod.descripcion) || 'Stock inicial',
+            cantidad: Number(qty),
+            usuario: (Auth.user && Auth.user.nombre) || 'Importación',
+            fecha: now.toLocaleDateString(),
+            hora: now.toLocaleTimeString(),
+            deposito: targetDeposit,
+            tipo: 'ingreso'
+          });
+        }
       }
+
+      if (countsToSave.length > 0) {
+        await API.saveCountsBatch(countsToSave);
+      }
+
+      await loadDatabase();
       renderReportTable();
+      renderHistoryTable();
 
-      alert(`Se importaron ${importedProducts.length} código(s). Se agregaron ${newProducts.length} producto(s) nuevo(s) y se actualizaron ${productsWithStockToUpdate.length} producto(s) que tenían stock en cero.`);
+      alert(`Se procesaron ${importedProducts.length} productos en la base de datos.${countsToSave.length ? ` Se registraron ${countsToSave.length} conteos en "${targetDeposit}".` : ''}`);
     } catch (error) {
       console.error(error);
       alert('No se pudo leer el archivo. Asegurate de subir un CSV o Excel válido.');
@@ -295,17 +319,21 @@ function getEffectivePhysicalMap(deposito = document.getElementById('report-depo
   const localCounts = JSON.parse(localStorage.getItem('db_counts') || '[]');
   const physicalMap = {};
 
-  // Las importaciones antiguas no tenían depósito: se conservan en Ático.
-  if (deposito === 'todos' || deposito === 'Ático') Object.entries(importedStockMap).forEach(([key, value]) => {
-    const normalizedKey = normalizeCodigo(key);
-    physicalMap[normalizedKey] = Number(value || 0);
-  });
-
   localCounts.filter((item) => deposito === 'todos' || String(item.deposito || 'Ático').toLowerCase() === deposito.toLowerCase()).forEach((item) => {
     if (!item || !item.codigo) return;
     const key = normalizeCodigo(item.codigo);
     physicalMap[key] = (physicalMap[key] || 0) + (item.tipo === 'salida' ? -1 : 1) * Number(item.cantidad || 0);
   });
+
+  // Si hay algún producto en importedStockMap que aún no figure en localCounts:
+  if (deposito === 'todos' || deposito === 'Ático') {
+    Object.entries(importedStockMap).forEach(([key, value]) => {
+      const normalizedKey = normalizeCodigo(key);
+      if (!Object.prototype.hasOwnProperty.call(physicalMap, normalizedKey)) {
+        physicalMap[normalizedKey] = Number(value || 0);
+      }
+    });
+  }
 
   return physicalMap;
 }
@@ -632,9 +660,12 @@ async function searchProduct(codigo) {
 
   if (currentProduct) {
     let acumulado = getAccumulatedCount(currentProduct.codigo);
-    if (Auth.user.rol === 'salida') {
-      try { acumulado = Number((await API.fetchStock(currentProduct.codigo, getSelectedDeposit())).stock || 0); } catch (_) { /* el servidor validará la salida al confirmar */ }
-    }
+    try {
+      const stockRes = await API.fetchStock(currentProduct.codigo, getSelectedDeposit());
+      if (stockRes && typeof stockRes.stock === 'number') {
+        acumulado = stockRes.stock;
+      }
+    } catch (_) { /* fallback a acumulado local */ }
 
     document.getElementById('info-desc').textContent = currentProduct.descripcion;
     document.getElementById('info-marca').textContent = currentProduct.marca;

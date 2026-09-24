@@ -239,6 +239,52 @@ const API = {
     }
   },
 
+  async saveProductsBatch(productsList) {
+    if (!productsList || !productsList.length) return { total: 0 };
+    const products = this.readLocal('db_products', []);
+    const prodMap = new Map(products.map(p => [String(p.codigo || '').toLowerCase(), p]));
+    productsList.forEach(p => {
+      const key = String(p.codigo || '').toLowerCase();
+      prodMap.set(key, { ...(prodMap.get(key) || {}), ...p });
+    });
+    this.writeLocal('db_products', Array.from(prodMap.values()));
+
+    try {
+      const urls = [`${API_URL}/products/batch`];
+      const options = {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ products: productsList })
+      };
+      const res = await tryFetch(urls, options);
+      return await res.json();
+    } catch (err) {
+      console.warn('Fallo guardando lote de productos en backend:', err);
+      return { status: 'pending', error: err.message };
+    }
+  },
+
+  async saveCountsBatch(countsList) {
+    if (!countsList || !countsList.length) return { total: 0 };
+    const cached = this.readLocal('db_counts', []);
+    const updated = [...cached, ...countsList];
+    this.writeLocal('db_counts', updated);
+
+    try {
+      const urls = [`${API_URL}/counts/batch`];
+      const options = {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ counts: countsList })
+      };
+      const res = await tryFetch(urls, options);
+      return await res.json();
+    } catch (err) {
+      console.warn('Fallo guardando lote de conteos en backend:', err);
+      return { status: 'pending', error: err.message };
+    }
+  },
+
   async deleteProduct(codigo) {
     const normalizedCodigo = String(codigo || '').toLowerCase();
     const products = this.readLocal('db_products', []);

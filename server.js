@@ -2,7 +2,7 @@ const express = require('express');
 const path = require('path');
 const cors = require('cors');
 const crypto = require('crypto');
-const { initializeDb, all, get, run, storageType, isPersistent, countUsers, findUserByName, createUser, listUsers, deactivateUser, listDeposits, createDeposit, getStock, addMovement, listMovements } = require('./db');
+const { initializeDb, all, get, run, storageType, isPersistent, countUsers, findUserByName, createUser, listUsers, deactivateUser, listDeposits, createDeposit, getStock, addMovement, listMovements, upsertProducts, addMovementsBatch } = require('./db');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -10,7 +10,7 @@ const authSecret = process.env.AUTH_SECRET || crypto.randomBytes(32).toString('h
 if (!process.env.AUTH_SECRET) console.warn('ADVERTENCIA: AUTH_SECRET no está configurada; las sesiones se cerrarán si el servidor se reinicia.');
 
 app.use(cors({ origin: '*' }));
-app.use(express.json({ limit: '1mb' }));
+app.use(express.json({ limit: '10mb' }));
 app.use(express.text({ type: '*/*' }));
 app.use(express.static(__dirname));
 
@@ -162,11 +162,28 @@ app.get('/api/products', async (req, res) => {
       talle: row.talle || '',
       color: row.color || '',
       ubicacion: row.ubicacion,
-      stockTeorico: Number(row.stock_teorico || 0)
+      stockTeorico: Number(row.stock_teorico ?? row.stockTeorico ?? row.stock ?? row.cantidad ?? row.stock_inicial ?? row.stock_fisico ?? 0)
     })));
   } catch (error) {
     console.error('Error al leer productos:', error);
     res.status(500).json({ error: 'No se pudo leer productos' });
+  }
+});
+
+app.post('/api/products/batch', async (req, res) => {
+  try {
+    if (req.user.rol === 'salida') {
+      return res.status(403).json({ error: 'El operador de salida no puede agregar productos' });
+    }
+    const body = parseBody(req);
+    const products = Array.isArray(body.products) ? body.products : (Array.isArray(body) ? body : (body.payload && Array.isArray(body.payload) ? body.payload : []));
+    if (!products.length) return res.status(400).json({ error: 'Lista de productos vacía' });
+
+    const result = await upsertProducts(products);
+    res.json({ status: 'success', ...result });
+  } catch (error) {
+    console.error('Error en carga masiva de productos:', error);
+    res.status(500).json({ error: 'No se pudo procesar la carga masiva de productos' });
   }
 });
 
@@ -328,6 +345,37 @@ app.post('/api/counts', async (req, res) => {
   } catch (error) {
     console.error('Error al guardar conteo:', error);
     res.status(500).json({ error: 'No se pudo guardar el conteo' });
+  }
+});
+
+app.post('/api/counts/batch', async (req, res) => {
+  try {
+    if (req.user.rol === 'salida') {
+      return res.status(403).json({ error: 'El operador de salida no puede registrar conteos masivos' });
+    }
+    const body = parseBody(req);
+    const counts = Array.isArray(body.counts) ? body.counts : (Array.isArray(body) ? body : (body.payload && Array.isArray(body.payload) ? body.payload : []));
+    if (!counts.length) return res.status(400).json({ error: 'Lista de conteos vacía' });
+
+    const now = new Date();
+    const defaultDate = now.toISOString().slice(0, 10);
+    const defaultTime = now.toLocaleTimeString('es-AR');
+    const preparedCounts = counts.map(c => ({
+      codigo: String(c.codigo || '').trim(),
+      descripcion: String(c.descripcion || '').trim(),
+      cantidad: Number(c.cantidad || 0),
+      usuario: req.user.nombre,
+      fecha: String(c.fecha || defaultDate),
+      hora: String(c.hora || defaultTime),
+      tipo: String(c.tipo || 'ingreso').trim() === 'salida' ? 'salida' : 'ingreso',
+      deposito: String(c.deposito || 'Ático').trim()
+    })).filter(c => c.codigo && Number.isFinite(c.cantidad) && c.cantidad > 0);
+
+    const result = await addMovementsBatch(preparedCounts);
+    res.json({ status: 'success', ...result });
+  } catch (error) {
+    console.error('Error en carga masiva de conteos:', error);
+    res.status(500).json({ error: 'No se pudo guardar los conteos masivos: ' + error.message });
   }
 });
 
