@@ -1,4 +1,4 @@
-# fly.toml app configuration file generated for inventario-repuestos on 2026-10-24T11:30:13Z
+# fly.toml app configuration file generated for inventario-repuestos on 2026-10-24T11:41:48Z
 #
 # See https://fly.io/docs/reference/configuration/ for information about how to use this file.
 #
@@ -16,7 +16,7 @@ primary_region = 'gru'
   auto_extend_size_limit = '10GB'
 
 [http_service]
-  internal_port = 8080
+  internal_port = 3000
   force_https = true
   auto_stop_machines = 'stop'
   auto_start_machines = true
