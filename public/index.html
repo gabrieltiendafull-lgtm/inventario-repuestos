@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sistema de Conteo de Stock - Repuestos</title>
+  <link rel="stylesheet" href="css/inventario-repuestos_css_styles.css">
+  <!-- HTML5-QRCode library for mobile camera scanner -->
+  <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+</head>
+<body>
+  <div id="auth-overlay" class="auth-overlay">
+    <div class="auth-card">
+      <h2>Inventario de Repuestos</h2>
+      <form id="auth-login-form" class="hidden">
+        <p>Ingresá con tu usuario y contraseña.</p>
+        <input id="auth-nombre" placeholder="Usuario" autocomplete="username" required>
+        <input id="auth-password" type="password" placeholder="Contraseña" autocomplete="current-password" required>
+        <p id="auth-error" class="form-error"></p><button type="submit">Ingresar</button>
+      </form>
+      <form id="auth-setup-form" class="hidden">
+        <p>Configuración inicial. Vas a crear la contraseña del administrador <strong>Gabriel</strong>.</p>
+        <input id="setup-password" type="password" placeholder="Contraseña (mínimo 8 caracteres)" autocomplete="new-password" required minlength="8">
+        <input id="setup-password-confirm" type="password" placeholder="Repetir contraseña" autocomplete="new-password" required minlength="8">
+        <p id="setup-error" class="form-error"></p><button type="submit">Crear acceso de Gabriel</button>
+      </form>
+    </div>
+  </div>
+  <header>
+    <div class="header-title">
+      <h1>Conteo de Stock de Repuestos</h1>
+      <span id="sync-status" class="status-offline">Cargando base de datos...</span>
+      <button id="btn-logout" class="btn-link" type="button" onclick="Auth.logout()">Salir</button>
+    </div>
+    <div class="header-search">
+      <input id="global-search" type="search" placeholder="Buscar código, descripción o marca..." aria-label="Búsqueda global">
+      <button id="btn-clear-search" type="button" onclick="clearGlobalSearch()" title="Limpiar búsqueda">✖</button>
+    </div>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab-btn active" onclick="switchTab('conteo')">📦 Conteo Rápido</button>
+    <button class="tab-btn admin-only" onclick="switchTab('reporte')">📊 Reporte y Comparativa</button>
+    <button class="tab-btn admin-only" onclick="switchTab('historial')">📜 Historial</button>
+    <button class="tab-btn admin-only" onclick="switchTab('usuarios')">👥 Operadores</button>
+  </nav>
+
+  <main>
+    <!-- SECCIÓN CONTEO RÁPIDO -->
+    <section id="sec-conteo" class="tab-content active">
+      <div class="card">
+        <div class="card-header">
+          <h2>Registro de Piezas</h2>
+          <button id="btn-toggle-camera" class="btn-secondary" onclick="toggleCameraScanner()">
+            📷 Escanear con Cámara
+          </button>
+        </div>
+
+        <!-- Scanner de Cámara (Oculto por defecto) -->
+        <div id="camera-scanner-container" class="scanner-container hidden">
+          <div id="reader"></div>
+          <button class="btn-danger" onclick="stopCameraScanner()">Cerrar Cámara</button>
+        </div>
+
+        <form id="form-conteo" onsubmit="handleFormSubmit(event)">
+          <div class="form-group">
+            <label for="input-codigo">Código del Repuesto:</label>
+            <div class="input-with-button">
+              <input type="text" id="input-codigo" placeholder="Ingrese o escanee el código (Ej: FMPD00812)" autocomplete="off" autofocus required>
+              <button type="button" class="btn-icon" onclick="manualSearchProduct()" title="Buscar">🔍</button>
+            </div>
+          </div>
+
+          <!-- Información del Producto Encontrado -->
+          <div id="product-info" class="info-box hidden">
+            <div class="info-grid">
+              <div><strong>Producto:</strong> <span id="info-desc">-</span></div>
+              <div><strong>Marca:</strong> <span id="info-marca">-</span></div>
+              <div><strong>Talle:</strong> <span id="info-talle">-</span></div>
+              <div><strong>Color:</strong> <span id="info-color">-</span></div>
+              <div><strong>Ubicación:</strong> <span id="info-ubicacion">-</span></div>
+              <div><strong>Stock Teórico:</strong> <span id="info-teorico" class="highlight-val">-</span></div>
+              <div><strong id="stock-info-label">Stock en depósito:</strong> <span id="info-acumulado" class="highlight-val count-val">-</span></div>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label for="input-deposito">Depósito:</label>
+            <select id="input-deposito" required onchange="if (currentProduct) searchProduct(currentProduct.codigo)"></select>
+          </div>
+          <div class="form-group">
+            <label for="input-cantidad">Cantidad Encontrada:</label>
+            <input type="number" id="input-cantidad" placeholder="0" min="0.01" step="any" required disabled>
+          </div>
+
+          <p id="current-operator" class="current-operator"></p>
+
+          <button type="submit" id="btn-registrar" disabled>Registrar Conteo (ENTER)</button>
+        </form>
+
+        <div id="not-found-box" class="not-found-box hidden">
+          <p>No se encontró el código <strong id="not-found-code">-</strong>.</p>
+          <button type="button" id="btn-add-new-product" class="btn-secondary">＋ Agregar nuevo ítem</button>
+        </div>
+
+        <div id="new-product-panel" class="new-product-panel hidden">
+          <h3 id="new-product-title">Agregar nuevo repuesto</h3>
+          <div id="new-product-form">
+            <div class="new-product-grid">
+              <div class="form-group">
+                <label for="new-product-codigo">Código</label>
+                <input type="text" id="new-product-codigo" required>
+              </div>
+              <div class="form-group">
+                <label for="new-product-descripcion">Descripción</label>
+                <input type="text" id="new-product-descripcion" required>
+              </div>
+              <div class="form-group">
+                <label for="new-product-marca">Marca</label>
+                <input type="text" id="new-product-marca" required>
+              </div>
+              <div class="form-group">
+                <label for="new-product-talle">Talle <span aria-label="opcional">(opcional)</span></label>
+                <input type="text" id="new-product-talle" placeholder="Ej: M, 42, L">
+              </div>
+              <div class="form-group">
+                <label for="new-product-color">Color <span aria-label="opcional">(opcional)</span></label>
+                <input type="text" id="new-product-color" placeholder="Ej: negro">
+              </div>
+              <div class="form-group">
+                <label for="new-product-deposito">Depósito del ingreso inicial</label>
+                <select id="new-product-deposito" required></select>
+              </div>
+              <div class="form-group">
+                <label for="new-product-ubicacion">Ubicación física</label>
+                <input type="text" id="new-product-ubicacion" placeholder="Ej: A-01-2">
+              </div>
+              <div class="form-group">
+                <label for="new-product-stock">Stock inicial</label>
+                <input type="number" id="new-product-stock" min="0" step="any" value="0" required>
+              </div>
+              <div class="form-group">
+                <label for="new-product-cantidad">Cantidad encontrada</label>
+                <input type="number" id="new-product-cantidad" min="0" step="any" value="0">
+              </div>
+            </div>
+            <div class="new-product-actions">
+              <button type="button" id="btn-save-new-product" class="btn-save-new">Guardar repuesto</button>
+              <button type="button" id="btn-cancel-new-product" class="btn-link">Cancelar</button>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <section id="sec-usuarios" class="tab-content admin-only">
+      <div class="card">
+        <h2>Operadores</h2>
+        <form id="operator-form" class="operator-form">
+          <input id="operator-name" placeholder="Nombre (ej. Facundo)" required>
+          <input id="operator-password" type="password" placeholder="Contraseña (mínimo 8 caracteres)" required minlength="8">
+          <select id="operator-role"><option value="operador">Operador de ingreso</option><option value="salida">Operador de salida</option><option value="admin">Administrador</option></select>
+          <button type="submit">Crear usuario</button>
+        </form>
+        <p id="operator-error" class="form-error"></p>
+        <hr>
+        <h3>Depósitos</h3>
+        <form id="deposit-form" class="operator-form">
+          <input id="deposit-name" placeholder="Nombre del depósito (ej. Taller)" required>
+          <button type="submit">Crear depósito</button>
+        </form>
+        <p id="deposit-error" class="form-error"></p>
+        <div class="table-container"><table id="table-deposits"><thead><tr><th>Depósito</th><th>Estado</th></tr></thead><tbody></tbody></table></div>
+        <div class="table-container"><table id="table-operators"><thead><tr><th>Nombre</th><th>Rol</th><th>Estado</th><th>Acción</th></tr></thead><tbody></tbody></table></div>
+      </div>
+    </section>
+
+    <!-- SECCIÓN REPORTE -->
+    <section id="sec-reporte" class="tab-content admin-only">
+      <div class="card">
+        <div class="report-header">
+          <h2>Comparativa Stock Teórico vs Físico</h2>
+          <button onclick="exportToCSV()" class="btn-export">📥 Exportar a CSV / Excel</button>
+        </div>
+
+        <!-- Tarjetas de Resumen KPI -->
+        <div class="kpi-grid">
+          <div class="kpi-card kpi-total">
+            <span class="kpi-num" id="kpi-total">0</span>
+            <span class="kpi-label">Total Productos</span>
+          </div>
+          <div class="kpi-card kpi-faltante">
+            <span class="kpi-num" id="kpi-faltantes">0</span>
+            <span class="kpi-label">Con Faltantes</span>
+          </div>
+          <div class="kpi-card kpi-sobrante">
+            <span class="kpi-num" id="kpi-sobrantes">0</span>
+            <span class="kpi-label">Con Sobrantes</span>
+          </div>
+          <div class="kpi-card kpi-nocontado">
+            <span class="kpi-num" id="kpi-nocontados">0</span>
+            <span class="kpi-label">No Contados</span>
+          </div>
+        </div>
+
+        <div class="import-panel">
+          <div class="import-header">
+            <h3>Importar productos y stock</h3>
+            <button type="button" class="btn-secondary" onclick="document.getElementById('import-stock-file').click()">📁 Seleccionar archivo</button>
+          </div>
+          <div class="import-actions">
+            <input id="import-stock-file" type="file" accept=".csv,.xlsx,.xls" class="hidden-file-input" />
+            <button type="button" class="btn-import" onclick="importStockFile()">Importar CSV / Excel</button>
+            <button type="button" class="btn-danger" onclick="clearImportedStock()">🗑️ Limpiar importación</button>
+          </div>
+          <p class="import-help">Se crean los códigos nuevos. Columnas admitidas: Código, Descripción, Marca, Ubicación, Stock/Cantidad y Stock Físico.</p>
+        </div>
+
+        <div class="filter-group">
+          <label for="report-deposito">Depósito:</label>
+          <select id="report-deposito" onchange="renderReportTable()"></select>
+          <label for="filter-status">Filtrar por estado:</label>
+          <select id="filter-status" onchange="renderReportTable()">
+            <option value="todos">Todos los productos</option>
+            <option value="faltante">Con Faltantes (-)</option>
+            <option value="sobrante">Con Sobrantes (+)</option>
+            <option value="correcto">Sin Diferencias (0)</option>
+            <option value="no_contado">No Contados</option>
+          </select>
+        </div>
+
+        <div class="table-container">
+          <table id="table-report">
+            <thead>
+              <tr>
+                <th>Código</th>
+                <th>Descripción</th>
+                <th>Marca</th>
+                <th>Talle</th>
+                <th>Color</th>
+                <th>Ubicación</th>
+                <th>Stock Teórico</th>
+                <th>Stock Físico</th>
+                <th>Diferencia</th>
+                <th>Estado</th>
+                <th>Acciones</th>
+              </tr>
+            </thead>
+            <tbody>
+              <!-- Se puebla dinámicamente -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECCIÓN HISTORIAL -->
+    <section id="sec-historial" class="tab-content admin-only">
+      <div class="card">
+        <div class="report-header">
+          <h2>Historial de Transacciones de Conteo</h2>
+          <button onclick="clearLocalHistory()" class="btn-danger">🗑️ Limpiar Historial Local</button>
+        </div>
+        <div class="table-container">
+          <table id="table-history">
+            <thead>
+              <tr>
+                <th>Fecha y Hora</th>
+                <th>Código</th>
+                <th>Producto</th>
+                <th>Tipo</th>
+                <th>Depósito</th>
+                <th>Cantidad</th>
+                <th>Usuario</th>
+              </tr>
+            </thead>
+            <tbody>
+              <!-- Se puebla dinámicamente -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="js/inventario-repuestos_js_api.js"></script>
+  <script src="js/inventario-repuestos_js_auth.js"></script>
+  <script src="js/inventario-repuestos_js_scanner.js"></script>
+  <script src="js/inventario-repuestos_js_app.js"></script>
+</body>
+</html>
